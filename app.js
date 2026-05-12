@@ -68,11 +68,15 @@ const parSummary = document.getElementById("parSummary");
 const toggleCommandHelpBtn = document.getElementById("toggleCommandHelpBtn");
 const commandHelpPanel = document.getElementById("commandHelpPanel");
 
+const enableAudioBtn = document.getElementById("enableAudioBtn");
+const audioStatus = document.getElementById("audioStatus");
+
 let recognition = null;
 let selectedCourseSetup = null;
 let isHandlingVoiceCommand = false;
 let lastVoiceCommand = "";
 let lastVoiceCommandTime = 0;
+let voiceResponsesEnabled = false;
 
 startRoundBtn.addEventListener("click", startRound);
 resetRoundBtn.addEventListener("click", resetRound);
@@ -94,7 +98,7 @@ saveParBtn.addEventListener("click", saveParForCurrentHole);
 toggleCommandHelpBtn.addEventListener("click", toggleCommandHelp);
 courseDataFileInput.addEventListener("change", importCourseDataFromFile);
 exportCourseDataBtn.addEventListener("click", exportSavedCourseData);
-
+enableAudioBtn.addEventListener("click", enableVoiceResponses);
 if (voiceBtn) {
   voiceBtn.addEventListener("click", startVoiceRecognition);
 }
@@ -691,17 +695,32 @@ function escapeRegExp(text) {
 
 function speakText(text) {
   if (!window.speechSynthesis) {
+    if (audioStatus) {
+      audioStatus.textContent = "Voice responses are not supported in this browser.";
+    }
+
+    return;
+  }
+
+  if (!voiceResponsesEnabled) {
+    if (audioStatus) {
+      audioStatus.textContent = "Tap Enable Voice Responses first.";
+    }
+
     return;
   }
 
   window.speechSynthesis.cancel();
 
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "en-US";
-  utterance.rate = 1;
-  utterance.pitch = 1;
+  // Small delay helps prevent speech from fighting with voice recognition ending.
+  setTimeout(function () {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    utterance.rate = 1;
+    utterance.pitch = 1;
 
-  window.speechSynthesis.speak(utterance);
+    window.speechSynthesis.speak(utterance);
+  }, 250);
 }
 
 // -------------------------------
@@ -2342,4 +2361,26 @@ if ("serviceWorker" in navigator) {
         console.log("Service worker registration failed:", error);
       });
   });
+}
+
+// -------------------------------
+// Voice Response Setup
+// -------------------------------
+
+function enableVoiceResponses() {
+  if (!window.speechSynthesis) {
+    audioStatus.textContent = "Voice responses are not supported in this browser.";
+    return;
+  }
+
+  voiceResponsesEnabled = true;
+  audioStatus.textContent = "Voice responses enabled.";
+
+  const utterance = new SpeechSynthesisUtterance("Voice responses enabled.");
+  utterance.lang = "en-US";
+  utterance.rate = 1;
+  utterance.pitch = 1;
+
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
 }

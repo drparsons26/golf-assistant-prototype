@@ -586,3 +586,38 @@ select {
     max-height: 260px;
   }
 }
+
+/* -------------------------------
+   Remove Sticky Mobile Sections
+-------------------------------- */
+
+@media (max-width: 700px) {
+  .round-top {
+    position: static;
+    top: auto;
+    z-index: auto;
+    background: white;
+    margin: 0 0 14px 0;
+    padding: 0;
+    border-bottom: none;
+    border-radius: 0;
+  }
+
+  .voice-box {
+    position: static;
+    bottom: auto;
+    z-index: auto;
+    margin-left: 0;
+    margin-right: 0;
+    margin-bottom: 0;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+}
+
+#audioStatus {
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: bold;
+  color: #526052;
+}
