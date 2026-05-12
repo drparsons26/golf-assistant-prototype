@@ -1,0 +1,588 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f2f5f1;
+  color: #1f2a1f;
+}
+
+.app {
+  max-width: 950px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+header h1 {
+  margin-bottom: 5px;
+}
+
+header p {
+  margin-top: 0;
+  color: #526052;
+}
+
+.card {
+  background: white;
+  padding: 20px;
+  margin-bottom: 20px;
+  border-radius: 14px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.hidden {
+  display: none;
+}
+
+label {
+  display: block;
+  margin-top: 14px;
+  margin-bottom: 6px;
+  font-weight: bold;
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #bfc9bf;
+  border-radius: 8px;
+  font-size: 16px;
+}
+
+textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+button {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #236b35;
+  color: white;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #1b5429;
+}
+
+button.danger {
+  background: #b23b3b;
+}
+
+button.danger:hover {
+  background: #8e2f2f;
+}
+
+.round-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+#holeTitle {
+  font-size: 20px;
+  font-weight: bold;
+  color: #236b35;
+}
+
+.player-score-row {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.player-score-row span {
+  font-weight: bold;
+}
+
+.button-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+#message {
+  margin-top: 14px;
+  font-weight: bold;
+  color: #236b35;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 14px;
+  min-width: 600px;
+}
+
+th,
+td {
+  border: 1px solid #d4ddd4;
+  padding: 10px;
+  text-align: center;
+}
+
+th {
+  background: #e4efe4;
+}
+
+td:first-child,
+th:first-child {
+  text-align: left;
+  font-weight: bold;
+}
+
+#leaderText {
+  margin-top: 8px;
+  padding: 12px;
+  background: #eef7ee;
+  border-radius: 8px;
+  font-weight: bold;
+}
+
+@media (max-width: 600px) {
+  .round-top {
+    flex-direction: column;
+  }
+
+  .player-score-row {
+    grid-template-columns: 1fr;
+  }
+
+  .button-row button {
+    width: 100%;
+  }
+}
+
+.voice-box {
+  margin-top: 18px;
+  padding: 16px;
+  background: #eef7ee;
+  border: 1px solid #c9ddc9;
+  border-radius: 12px;
+}
+
+.voice-box h3 {
+  margin-top: 0;
+}
+
+.voice-box p {
+  color: #526052;
+}
+
+#voiceStatus {
+  margin-top: 12px;
+  font-weight: bold;
+  color: #236b35;
+}
+
+#transcriptText {
+  margin-top: 10px;
+  padding: 10px;
+  background: white;
+  border-radius: 8px;
+  min-height: 40px;
+  color: #333;
+}
+
+.yardage-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+#yardageResult {
+  margin-top: 14px;
+  padding: 14px;
+  background: #eef7ee;
+  border-radius: 8px;
+  font-weight: bold;
+  color: #236b35;
+}
+
+@media (max-width: 600px) {
+  .yardage-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.target-group {
+  margin-top: 18px;
+  padding: 14px;
+  background: #f8fbf8;
+  border: 1px solid #d4ddd4;
+  border-radius: 10px;
+}
+
+.target-group h3 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  color: #236b35;
+}
+
+.hazard-section {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 2px solid #d4ddd4;
+}
+
+#hazardList {
+  margin-top: 14px;
+  padding: 14px;
+  background: #f8fbf8;
+  border: 1px solid #d4ddd4;
+  border-radius: 8px;
+}
+
+.hazard-item {
+  padding: 8px 0;
+  border-bottom: 1px solid #d4ddd4;
+}
+
+.hazard-item:last-child {
+  border-bottom: none;
+}
+
+.saved-course-box,
+.course-save-box {
+  margin-top: 18px;
+  padding: 14px;
+  background: #f8fbf8;
+  border: 1px solid #d4ddd4;
+  border-radius: 10px;
+}
+
+.saved-course-box h3,
+.course-save-box h3 {
+  margin-top: 0;
+  color: #236b35;
+}
+
+.saved-course-box p,
+.course-save-box p {
+  color: #526052;
+}
+
+.par-box {
+  margin-top: 18px;
+  margin-bottom: 18px;
+  padding: 16px;
+  background: #eef7ee;
+  border: 1px solid #c9ddc9;
+  border-radius: 12px;
+}
+
+.par-box h3 {
+  margin-top: 0;
+  color: #236b35;
+}
+
+.par-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: end;
+}
+
+#parSummary {
+  margin-top: 12px;
+  font-weight: bold;
+  color: #236b35;
+}
+
+.to-par-good {
+  font-weight: bold;
+}
+
+@media (max-width: 600px) {
+  .par-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* -------------------------------
+   Mobile-Friendly Prototype Polish
+-------------------------------- */
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  -webkit-text-size-adjust: 100%;
+}
+
+.app {
+  padding-bottom: 40px;
+}
+
+.card {
+  border: 1px solid #e1e8e1;
+}
+
+/* Make buttons feel better on phone */
+button {
+  min-height: 48px;
+  font-weight: bold;
+  touch-action: manipulation;
+}
+
+/* Better input sizing for phone */
+input,
+textarea,
+select {
+  min-height: 48px;
+}
+
+/* Make score inputs easier to tap */
+.player-score-row input {
+  text-align: center;
+  font-size: 18px;
+  font-weight: bold;
+}
+
+/* Make the scorecard easier to scroll */
+.table-wrapper {
+  max-height: 480px;
+  overflow: auto;
+  border: 1px solid #d4ddd4;
+  border-radius: 10px;
+}
+
+#scorecardTable th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #e4efe4;
+}
+
+#scorecardTable th:first-child,
+#scorecardTable td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: white;
+}
+
+#scorecardTable th:first-child {
+  z-index: 3;
+  background: #e4efe4;
+}
+
+/* Make key result boxes stand out */
+#message,
+#voiceStatus,
+#yardageResult,
+#parSummary,
+#leaderText {
+  line-height: 1.4;
+}
+
+/* Make voice area feel like the main action */
+.voice-box {
+  border: 2px solid #c9ddc9;
+}
+
+#voiceBtn {
+  width: 100%;
+  font-size: 18px;
+  background: #174f2c;
+}
+
+#voiceBtn:hover {
+  background: #10381f;
+}
+
+/* Better mobile layout */
+@media (max-width: 700px) {
+  body {
+    background: white;
+  }
+
+  .app {
+    padding: 10px;
+  }
+
+  header {
+    margin-bottom: 12px;
+  }
+
+  header h1 {
+    font-size: 26px;
+  }
+
+  header p {
+    font-size: 14px;
+  }
+
+  .card {
+    padding: 14px;
+    margin-bottom: 14px;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+
+  .round-top {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: white;
+    margin: -14px -14px 14px -14px;
+    padding: 14px;
+    border-bottom: 1px solid #d4ddd4;
+    border-radius: 12px 12px 0 0;
+  }
+
+  .round-top h2 {
+    margin-bottom: 4px;
+    font-size: 20px;
+  }
+
+  #holeTitle {
+    margin: 0;
+    font-size: 22px;
+  }
+
+  .button-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .button-row button {
+    width: 100%;
+    margin-top: 0;
+  }
+
+  .player-score-row {
+    grid-template-columns: 1fr 90px;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid #edf2ed;
+  }
+
+  .player-score-row span {
+    font-size: 18px;
+  }
+
+  .par-row {
+    grid-template-columns: 1fr;
+  }
+
+  .yardage-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .target-group {
+    padding: 12px;
+  }
+
+  .voice-box {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    margin-left: -14px;
+    margin-right: -14px;
+    margin-bottom: -14px;
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -4px 14px rgba(0, 0, 0, 0.12);
+  }
+
+  .voice-box p {
+    font-size: 13px;
+  }
+
+  #transcriptText {
+    font-size: 14px;
+  }
+
+  table {
+    font-size: 14px;
+    min-width: 900px;
+  }
+
+  th,
+  td {
+    padding: 8px;
+  }
+
+  #leaderText,
+  #yardageResult,
+  #message {
+    font-size: 16px;
+  }
+}
+
+.secondary-button {
+  width: 100%;
+  margin-top: 10px;
+  background: #eef7ee;
+  color: #236b35;
+  border: 1px solid #c9ddc9;
+}
+
+.secondary-button:hover {
+  background: #dcefdc;
+}
+
+.command-help {
+  margin-top: 12px;
+  padding: 14px;
+  background: white;
+  border: 1px solid #d4ddd4;
+  border-radius: 10px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.command-help h4 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  color: #236b35;
+}
+
+.command-category {
+  padding: 10px 0;
+  border-bottom: 1px solid #edf2ed;
+}
+
+.command-category:last-child {
+  border-bottom: none;
+}
+
+.command-category h5 {
+  margin: 0 0 6px 0;
+  font-size: 15px;
+  color: #1f2a1f;
+}
+
+.command-category p {
+  margin: 4px 0;
+  font-size: 14px;
+  color: #526052;
+}
+
+@media (max-width: 700px) {
+  .command-help {
+    max-height: 260px;
+  }
+}

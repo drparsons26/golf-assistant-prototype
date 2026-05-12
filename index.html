@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Golf Assistant Prototype</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#236b35" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Golf Assist" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Golf Assistant</h1>
+      <p>Manual scorecard prototype</p>
+    </header>
+
+    <section id="setupSection" class="card">
+      <h2>Start Round</h2>
+
+      <label for="courseName">Course Name</label>
+      <input id="courseName" type="text" placeholder="Example: Test Course" />
+
+      <label for="playerNames">Players</label>
+      <textarea id="playerNames" placeholder="Enter names separated by commas. Example: Drake, John, Josh"></textarea>
+
+      <label for="totalHoles">Number of Holes</label>
+<select id="totalHoles">
+  <option value="9">9 Holes</option>
+  <option value="18" selected>18 Holes</option>
+</select>
+
+<div class="saved-course-box">
+  <h3>Saved Course Setup</h3>
+  <p>Load a course you have already mapped, or import/export course data.</p>
+
+  <select id="savedCourseSelect">
+    <option value="">No saved course selected</option>
+  </select>
+
+  <div class="button-row">
+    <button id="loadCourseSetupBtn" type="button">Load Course Setup</button>
+    <button id="importCourseDataBtn" type="button">Import Course Data</button>
+    <button id="exportCourseDataBtn" type="button">Export Saved Courses</button>
+  </div>
+
+  <input id="courseDataFileInput" class="hidden" type="file" accept=".json,application/json" />
+</div>
+
+<button id="startRoundBtn">Start Round</button>
+    </section>
+
+    <section id="roundSection" class="card hidden">
+      <div class="round-top">
+        <div>
+          <h2 id="courseTitle">Course</h2>
+          <p id="holeTitle">Hole 1</p>
+        </div>
+
+        <button id="resetRoundBtn" class="danger">Reset Round</button>
+      </div>
+
+      <div class="par-box">
+  <h3>Hole Par</h3>
+
+  <div class="par-row">
+    <div>
+      <label for="holeParInput">Par for Current Hole</label>
+      <input id="holeParInput" type="number" min="3" max="6" value="4" />
+    </div>
+
+    <button id="saveParBtn" type="button">Save Par</button>
+  </div>
+
+  <div id="parSummary">No par saved yet.</div>
+</div>
+
+      <div id="scoreInputs"></div>
+
+<div class="voice-box">
+  <h3>Voice Score Entry</h3>
+  <p>
+  Try saying: “John scored 4, Josh scored 3, and I scored 4.”
+  You can also ask: “Who is winning?” or “What is John’s total?”
+  To fix a mistake, say: “Change Josh’s score on hole 1 to 4.”
+  To move around, say: “Next hole” or “Go to hole 5.”
+  For distance, say: “How far to the green?”
+</p>
+
+  <button id="voiceBtn" type="button">Start Listening</button>
+
+<button id="toggleCommandHelpBtn" type="button" class="secondary-button">
+  Show Voice Commands
+</button>
+
+<div id="commandHelpPanel" class="command-help hidden">
+  <h4>Voice Commands</h4>
+
+  <div class="command-category">
+    <h5>Score Entry</h5>
+    <p>“John scored 4, Josh scored 3, and I scored 4.”</p>
+    <p>“John got five, Josh got four, and I got four.”</p>
+  </div>
+
+  <div class="command-category">
+    <h5>Score Questions</h5>
+    <p>“Who is winning?”</p>
+    <p>“What is John’s total?”</p>
+    <p>“What is my total?”</p>
+    <p>“What did Josh score on hole 2?”</p>
+    <p>“What are the scores?”</p>
+  </div>
+
+  <div class="command-category">
+    <h5>Par Questions</h5>
+    <p>“What am I to par?”</p>
+    <p>“What is John to par?”</p>
+    <p>“Who is over par?”</p>
+  </div>
+
+  <div class="command-category">
+    <h5>Round Control</h5>
+    <p>“Next hole.”</p>
+    <p>“Previous hole.”</p>
+    <p>“Go to hole 5.”</p>
+    <p>“What hole are we on?”</p>
+  </div>
+
+  <div class="command-category">
+    <h5>Yardage</h5>
+    <p>“How far to the green?”</p>
+    <p>“What is my yardage?”</p>
+    <p>“Distance to the hole?”</p>
+    <p>“How far to the pin?”</p>
+  </div>
+
+  <div class="command-category">
+    <h5>Hazards and Layups</h5>
+    <p>“What hazards are ahead?”</p>
+    <p>“How far to the bunker?”</p>
+    <p>“How far to the water?”</p>
+    <p>“Distance to the layup?”</p>
+  </div>
+
+  <div class="command-category">
+    <h5>Corrections</h5>
+    <p>“Change Josh’s score on hole 1 to 4.”</p>
+    <p>“Fix my score on hole 3 to 5.”</p>
+  </div>
+</div>
+
+<div id="voiceStatus">Voice ready.</div>
+<div id="transcriptText"></div>
+</div>
+
+      <div class="button-row">
+        <button id="previousHoleBtn">Previous Hole</button>
+        <button id="saveScoresBtn">Save Scores</button>
+        <button id="nextHoleBtn">Next Hole</button>
+      </div>
+
+      <div id="message"></div>
+    </section>
+
+    <section id="yardageSection" class="card hidden">
+  <h2>Hole Yardage</h2>
+  <p>
+    Enter the latitude and longitude for the front, center, and back of the green on the current hole.
+  </p>
+
+  <div class="target-group">
+    <h3>Front of Green</h3>
+    <div class="yardage-grid">
+      <div>
+        <label for="frontLat">Front Latitude</label>
+        <input id="frontLat" type="number" step="any" placeholder="Example: 35.2050" />
+      </div>
+
+      <div>
+        <label for="frontLng">Front Longitude</label>
+        <input id="frontLng" type="number" step="any" placeholder="Example: -97.4450" />
+      </div>
+    </div>
+  </div>
+
+  <div class="target-group">
+    <h3>Center of Green</h3>
+    <div class="yardage-grid">
+      <div>
+        <label for="centerLat">Center Latitude</label>
+        <input id="centerLat" type="number" step="any" placeholder="Example: 35.2051" />
+      </div>
+
+      <div>
+        <label for="centerLng">Center Longitude</label>
+        <input id="centerLng" type="number" step="any" placeholder="Example: -97.4451" />
+      </div>
+    </div>
+  </div>
+
+  <div class="target-group">
+    <h3>Back of Green</h3>
+    <div class="yardage-grid">
+      <div>
+        <label for="backLat">Back Latitude</label>
+        <input id="backLat" type="number" step="any" placeholder="Example: 35.2052" />
+      </div>
+
+      <div>
+        <label for="backLng">Back Longitude</label>
+        <input id="backLng" type="number" step="any" placeholder="Example: -97.4452" />
+      </div>
+    </div>
+  </div>
+
+  <div class="button-row">
+    <button id="saveTargetBtn" type="button">Save Green Targets for This Hole</button>
+    <button id="getYardageBtn" type="button">Get Yardage</button>
+  </div>
+
+  <div id="yardageResult">No yardage calculated yet.</div>
+  <div class="hazard-section">
+  <h3>Hazards and Layup Targets</h3>
+  <p>
+    Add bunkers, water, doglegs, or layup spots for the current hole.
+  </p>
+
+  <div class="yardage-grid">
+    <div>
+      <label for="hazardName">Target Name</label>
+      <input id="hazardName" type="text" placeholder="Example: Right bunker" />
+    </div>
+
+    <div>
+      <label for="hazardType">Target Type</label>
+      <select id="hazardType">
+        <option value="bunker">Bunker</option>
+        <option value="water">Water</option>
+        <option value="layup">Layup</option>
+        <option value="dogleg">Dogleg</option>
+        <option value="tree">Tree</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="yardage-grid">
+    <div>
+      <label for="hazardLat">Target Latitude</label>
+      <input id="hazardLat" type="number" step="any" placeholder="Example: 35.2055" />
+    </div>
+
+    <div>
+      <label for="hazardLng">Target Longitude</label>
+      <input id="hazardLng" type="number" step="any" placeholder="Example: -97.4455" />
+    </div>
+  </div>
+
+  <div class="button-row">
+    <button id="addHazardBtn" type="button">Add Target for This Hole</button>
+    <button id="clearHazardsBtn" type="button" class="danger">Clear Hole Targets</button>
+  </div>
+
+  <div id="hazardList">No hazards or layup targets saved for this hole.</div>
+  <div class="course-save-box">
+  <h3>Course Library</h3>
+  <p>Save the current course's green targets, hazards, and layup spots for future rounds.</p>
+
+  <button id="saveCourseSetupBtn" type="button">Save Current Course Setup</button>
+</div>
+</div>
+</section>
+
+    <section id="scorecardSection" class="card hidden">
+      <h2>Scorecard</h2>
+      <div id="leaderText"></div>
+      <div class="table-wrapper">
+        <table id="scorecardTable"></table>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
