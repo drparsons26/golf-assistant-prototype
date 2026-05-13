@@ -176,106 +176,115 @@
     Enter the latitude and longitude for the front, center, and back of the green on the current hole.
   </p>
 
-  <div class="target-group">
-    <h3>Front of Green</h3>
-    <div class="yardage-grid">
-      <div>
-        <label for="frontLat">Front Latitude</label>
-        <input id="frontLat" type="number" step="any" placeholder="Example: 35.2050" />
+  <details class="yardage-dropdown">
+    <summary>Green Coordinates</summary>
+    <div class="dropdown-content">
+      <div class="target-group">
+        <h3>Front of Green</h3>
+        <div class="yardage-grid">
+          <div>
+            <label for="frontLat">Front Latitude</label>
+            <input id="frontLat" type="number" step="any" placeholder="Example: 35.2050" />
+          </div>
+
+          <div>
+            <label for="frontLng">Front Longitude</label>
+            <input id="frontLng" type="number" step="any" placeholder="Example: -97.4450" />
+          </div>
+        </div>
       </div>
 
-      <div>
-        <label for="frontLng">Front Longitude</label>
-        <input id="frontLng" type="number" step="any" placeholder="Example: -97.4450" />
-      </div>
-    </div>
-  </div>
+      <div class="target-group">
+        <h3>Center of Green</h3>
+        <div class="yardage-grid">
+          <div>
+            <label for="centerLat">Center Latitude</label>
+            <input id="centerLat" type="number" step="any" placeholder="Example: 35.2051" />
+          </div>
 
-  <div class="target-group">
-    <h3>Center of Green</h3>
-    <div class="yardage-grid">
-      <div>
-        <label for="centerLat">Center Latitude</label>
-        <input id="centerLat" type="number" step="any" placeholder="Example: 35.2051" />
-      </div>
-
-      <div>
-        <label for="centerLng">Center Longitude</label>
-        <input id="centerLng" type="number" step="any" placeholder="Example: -97.4451" />
-      </div>
-    </div>
-  </div>
-
-  <div class="target-group">
-    <h3>Back of Green</h3>
-    <div class="yardage-grid">
-      <div>
-        <label for="backLat">Back Latitude</label>
-        <input id="backLat" type="number" step="any" placeholder="Example: 35.2052" />
+          <div>
+            <label for="centerLng">Center Longitude</label>
+            <input id="centerLng" type="number" step="any" placeholder="Example: -97.4451" />
+          </div>
+        </div>
       </div>
 
-      <div>
-        <label for="backLng">Back Longitude</label>
-        <input id="backLng" type="number" step="any" placeholder="Example: -97.4452" />
+      <div class="target-group">
+        <h3>Back of Green</h3>
+        <div class="yardage-grid">
+          <div>
+            <label for="backLat">Back Latitude</label>
+            <input id="backLat" type="number" step="any" placeholder="Example: 35.2052" />
+          </div>
+
+          <div>
+            <label for="backLng">Back Longitude</label>
+            <input id="backLng" type="number" step="any" placeholder="Example: -97.4452" />
+          </div>
+        </div>
       </div>
+
+      <div class="button-row">
+        <button id="saveTargetBtn" type="button">Save Green Targets for This Hole</button>
+        <button id="getYardageBtn" type="button">Get Yardage</button>
+      </div>
+
+      <div id="yardageResult">No yardage calculated yet.</div>
     </div>
-  </div>
+  </details>
 
-  <div class="button-row">
-    <button id="saveTargetBtn" type="button">Save Green Targets for This Hole</button>
-    <button id="getYardageBtn" type="button">Get Yardage</button>
-  </div>
+  <details class="yardage-dropdown">
+    <summary>Hazards and Layup Targets</summary>
+    <div class="dropdown-content hazard-section">
+      <p>
+        Add bunkers, water, doglegs, or layup spots for the current hole.
+      </p>
 
-  <div id="yardageResult">No yardage calculated yet.</div>
-  <div class="hazard-section">
-  <h3>Hazards and Layup Targets</h3>
-  <p>
-    Add bunkers, water, doglegs, or layup spots for the current hole.
-  </p>
+      <div class="yardage-grid">
+        <div>
+          <label for="hazardName">Target Name</label>
+          <input id="hazardName" type="text" placeholder="Example: Right bunker" />
+        </div>
 
-  <div class="yardage-grid">
-    <div>
-      <label for="hazardName">Target Name</label>
-      <input id="hazardName" type="text" placeholder="Example: Right bunker" />
+        <div>
+          <label for="hazardType">Target Type</label>
+          <select id="hazardType">
+            <option value="bunker">Bunker</option>
+            <option value="water">Water</option>
+            <option value="layup">Layup</option>
+            <option value="dogleg">Dogleg</option>
+            <option value="tree">Tree</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="yardage-grid">
+        <div>
+          <label for="hazardLat">Target Latitude</label>
+          <input id="hazardLat" type="number" step="any" placeholder="Example: 35.2055" />
+        </div>
+
+        <div>
+          <label for="hazardLng">Target Longitude</label>
+          <input id="hazardLng" type="number" step="any" placeholder="Example: -97.4455" />
+        </div>
+      </div>
+
+      <div class="button-row">
+        <button id="addHazardBtn" type="button">Add Target for This Hole</button>
+        <button id="clearHazardsBtn" type="button" class="danger">Clear Hole Targets</button>
+      </div>
+
+      <div id="hazardList">No hazards or layup targets saved for this hole.</div>
     </div>
+  </details>
 
-    <div>
-      <label for="hazardType">Target Type</label>
-      <select id="hazardType">
-        <option value="bunker">Bunker</option>
-        <option value="water">Water</option>
-        <option value="layup">Layup</option>
-        <option value="dogleg">Dogleg</option>
-        <option value="tree">Tree</option>
-        <option value="other">Other</option>
-      </select>
-    </div>
-  </div>
-
-  <div class="yardage-grid">
-    <div>
-      <label for="hazardLat">Target Latitude</label>
-      <input id="hazardLat" type="number" step="any" placeholder="Example: 35.2055" />
-    </div>
-
-    <div>
-      <label for="hazardLng">Target Longitude</label>
-      <input id="hazardLng" type="number" step="any" placeholder="Example: -97.4455" />
-    </div>
-  </div>
-
-  <div class="button-row">
-    <button id="addHazardBtn" type="button">Add Target for This Hole</button>
-    <button id="clearHazardsBtn" type="button" class="danger">Clear Hole Targets</button>
-  </div>
-
-  <div id="hazardList">No hazards or layup targets saved for this hole.</div>
   <div class="course-save-box">
   <h3>Course Library</h3>
   <p>Save the current course's green targets, hazards, and layup spots for future rounds.</p>
 
   <button id="saveCourseSetupBtn" type="button">Save Current Course Setup</button>
-</div>
 </div>
 </section>
 

@@ -77,6 +77,13 @@ let isHandlingVoiceCommand = false;
 let lastVoiceCommand = "";
 let lastVoiceCommandTime = 0;
 let voiceResponsesEnabled = false;
+const AI_VOICE_CONFIDENCE_THRESHOLD = 0.72;
+const VOICE_SILENCE_DELAY_MS = 1800;
+let isVoiceCaptureActive = false;
+let voiceFinalTranscript = "";
+let voiceInterimTranscript = "";
+let voiceSilenceTimer = null;
+let isFinalizingVoiceCommand = false;
 
 startRoundBtn.addEventListener("click", startRound);
 resetRoundBtn.addEventListener("click", resetRound);
@@ -453,57 +460,68 @@ function setupVoiceRecognition() {
 
   recognition = new SpeechRecognition();
   recognition.lang = "en-US";
-  recognition.continuous = false;
-  recognition.interimResults = false;
+  recognition.continuous = true;
+  recognition.interimResults = true;
 
   recognition.onstart = function () {
-    voiceStatus.textContent = "Listening...";
+    isVoiceCaptureActive = true;
+    voiceStatus.textContent = "Listening... pause briefly when you are done.";
     voiceBtn.textContent = "Listening...";
   };
 
   recognition.onresult = function (event) {
-  if (isHandlingVoiceCommand) {
-    return;
-  }
+    if (isHandlingVoiceCommand) {
+      return;
+    }
 
-  const transcript = event.results[0][0].transcript.trim();
-  const now = Date.now();
+    voiceInterimTranscript = "";
 
-  // Prevent the exact same command from being processed multiple times quickly.
-  if (
-    transcript.toLowerCase() === lastVoiceCommand &&
-    now - lastVoiceCommandTime < 2000
-  ) {
-    return;
-  }
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcriptPart = event.results[i][0].transcript.trim();
 
-  isHandlingVoiceCommand = true;
-  lastVoiceCommand = transcript.toLowerCase();
-  lastVoiceCommandTime = now;
+      if (!transcriptPart) {
+        continue;
+      }
 
-  transcriptText.textContent = transcript;
-  handleVoiceCommand(transcript);
+      if (event.results[i].isFinal) {
+        voiceFinalTranscript = `${voiceFinalTranscript} ${transcriptPart}`.trim();
+      } else {
+        voiceInterimTranscript = `${voiceInterimTranscript} ${transcriptPart}`.trim();
+      }
+    }
 
-  setTimeout(function () {
-    isHandlingVoiceCommand = false;
-  }, 1000);
-};
+    const visibleTranscript = getPendingVoiceTranscript();
+
+    if (visibleTranscript) {
+      transcriptText.textContent = visibleTranscript;
+      scheduleVoiceCommandFinalization();
+    }
+  };
 
   recognition.onerror = function (event) {
-    voiceStatus.textContent = `Voice error: ${event.error}`;
+    clearVoiceSilenceTimer();
+    isVoiceCaptureActive = false;
+    isFinalizingVoiceCommand = false;
+    voiceStatus.textContent = getVoiceRecognitionErrorMessage(event.error);
     voiceBtn.textContent = "Start Listening";
   };
 
   recognition.onend = function () {
   voiceBtn.textContent = "Start Listening";
 
+  if (isVoiceCaptureActive && !isFinalizingVoiceCommand && getPendingVoiceTranscript()) {
+    scheduleVoiceCommandFinalization(300);
+    return;
+  }
+
+  isVoiceCaptureActive = false;
+
   setTimeout(function () {
     isHandlingVoiceCommand = false;
   }, 1000);
-};
+  };
 }
-
-function startVoiceRecognition() {
+async function startVoiceRecognition() {
   if (!recognition) {
     alert("Voice recognition is not available in this browser.");
     return;
@@ -514,10 +532,241 @@ function startVoiceRecognition() {
     return;
   }
 
-  recognition.start();
+  if (isVoiceCaptureActive) {
+    finalizeVoiceCommandNow();
+    return;
+  }
+
+  const microphonePermission = await getMicrophonePermissionState();
+
+  if (microphonePermission === "denied") {
+    voiceStatus.textContent = getVoiceRecognitionErrorMessage("not-allowed");
+    voiceBtn.textContent = "Start Listening";
+    return;
+  }
+
+  try {
+    resetVoiceCaptureState();
+    recognition.start();
+  } catch (error) {
+    voiceStatus.textContent = "Voice recognition could not start. Wait a moment, then tap Start Listening again.";
+    voiceBtn.textContent = "Start Listening";
+  }
 }
 
-function handleVoiceCommand(transcript) {
+function resetVoiceCaptureState() {
+  clearVoiceSilenceTimer();
+  isVoiceCaptureActive = false;
+  isFinalizingVoiceCommand = false;
+  voiceFinalTranscript = "";
+  voiceInterimTranscript = "";
+  transcriptText.textContent = "";
+}
+
+function getPendingVoiceTranscript() {
+  return `${voiceFinalTranscript} ${voiceInterimTranscript}`.trim();
+}
+
+function scheduleVoiceCommandFinalization(delay = VOICE_SILENCE_DELAY_MS) {
+  clearVoiceSilenceTimer();
+
+  voiceSilenceTimer = setTimeout(function () {
+    finalizeVoiceCommandNow();
+  }, delay);
+}
+
+function clearVoiceSilenceTimer() {
+  if (voiceSilenceTimer) {
+    clearTimeout(voiceSilenceTimer);
+    voiceSilenceTimer = null;
+  }
+}
+
+async function finalizeVoiceCommandNow() {
+  if (isFinalizingVoiceCommand || isHandlingVoiceCommand) {
+    return;
+  }
+
+  clearVoiceSilenceTimer();
+
+  const transcript = getPendingVoiceTranscript();
+
+  if (!transcript) {
+    isVoiceCaptureActive = false;
+    voiceBtn.textContent = "Start Listening";
+    voiceStatus.textContent = "I did not hear anything. Tap Start Listening and try again.";
+    return;
+  }
+
+  isFinalizingVoiceCommand = true;
+  isVoiceCaptureActive = false;
+
+  try {
+    recognition.stop();
+  } catch (error) {
+    // Recognition may already be stopped by the browser.
+  }
+
+  const now = Date.now();
+  const normalizedTranscript = transcript.toLowerCase();
+
+  if (
+    normalizedTranscript === lastVoiceCommand &&
+    now - lastVoiceCommandTime < 2000
+  ) {
+    resetVoiceCaptureState();
+    return;
+  }
+
+  isHandlingVoiceCommand = true;
+  lastVoiceCommand = normalizedTranscript;
+  lastVoiceCommandTime = now;
+  transcriptText.textContent = transcript;
+  voiceStatus.textContent = "Heard it. Thinking...";
+
+  try {
+    await handleVoiceCommand(transcript);
+  } finally {
+    isHandlingVoiceCommand = false;
+    isFinalizingVoiceCommand = false;
+    isVoiceCaptureActive = false;
+    voiceBtn.textContent = "Start Listening";
+    voiceFinalTranscript = "";
+    voiceInterimTranscript = "";
+  }
+}
+
+async function getMicrophonePermissionState() {
+  if (!navigator.permissions || !navigator.permissions.query) {
+    return "";
+  }
+
+  try {
+    const status = await navigator.permissions.query({ name: "microphone" });
+    return status.state;
+  } catch (error) {
+    return "";
+  }
+}
+
+function getVoiceRecognitionErrorMessage(error) {
+  if (error === "not-allowed" || error === "service-not-allowed") {
+    return "Microphone access is blocked. Allow microphone access for this site in the browser, then tap Start Listening again.";
+  }
+
+  if (error === "audio-capture") {
+    return "No microphone was found. Check your device microphone, then tap Start Listening again.";
+  }
+
+  if (error === "no-speech") {
+    return "I did not hear anything. Tap Start Listening and try again.";
+  }
+
+  if (error === "network") {
+    return "Voice recognition needs a network connection in this browser. Check the connection and try again.";
+  }
+
+  if (error === "aborted") {
+    return "Voice listening stopped. Tap Start Listening when you are ready.";
+  }
+
+  return "Voice recognition hit a browser error. Check microphone permissions and try again.";
+}
+async function handleVoiceCommand(transcript) {
+  voiceStatus.textContent = "Thinking through that...";
+
+  try {
+    const agentResult = await askVoiceAgent(transcript);
+
+    if (agentResult && executeVoiceAgentAction(agentResult)) {
+      return;
+    }
+  } catch (error) {
+    console.warn("AI voice agent unavailable, using legacy parser.", error);
+  }
+
+  handleLegacyVoiceCommand(transcript);
+}
+
+async function askVoiceAgent(transcript) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(function () {
+    controller.abort();
+  }, 10000);
+
+  try {
+    const response = await fetch("/api/voice-agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        transcript: transcript,
+        round: buildRoundContextForAgent(),
+        client: {
+          app: "golf-assistant-prototype",
+          url: window.location.href
+        }
+      }),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`Voice agent request failed with ${response.status}.`);
+    }
+
+    const result = await response.json();
+
+    if (!isValidVoiceAgentResult(result)) {
+      throw new Error("Voice agent returned an invalid response.");
+    }
+
+    return result;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function buildRoundContextForAgent() {
+  return {
+    courseName: round.courseName,
+    players: round.players,
+    totalHoles: round.totalHoles,
+    currentHole: round.currentHole,
+    scores: round.scores,
+    holeTargets: round.holeTargets || {},
+    holeHazards: round.holeHazards || {},
+    holePars: round.holePars || {}
+  };
+}
+
+function isValidVoiceAgentResult(result) {
+  const allowedActions = [
+    "save_scores",
+    "change_score",
+    "set_par",
+    "go_to_hole",
+    "answer_question",
+    "get_green_yardage",
+    "get_hazard_distance",
+    "clarify",
+    "unknown"
+  ];
+
+  return Boolean(
+    result &&
+    allowedActions.includes(result.action) &&
+    typeof result.confidence === "number" &&
+    result.confidence >= 0 &&
+    result.confidence <= 1 &&
+    result.payload &&
+    typeof result.payload === "object" &&
+    typeof result.message === "string" &&
+    typeof result.speak === "boolean"
+  );
+}
+
+function handleLegacyVoiceCommand(transcript) {
   const command = transcript.toLowerCase().trim();
 
   // 1. Check for correction commands first.
@@ -603,6 +852,230 @@ if (questionAnswer) {
   speakText(questionAnswer);
   return;
 }
+}
+
+function executeVoiceAgentAction(result) {
+  if (result.action === "clarify") {
+    showVoiceAgentMessage(result.message || "Can you say that one more way?", true);
+    return true;
+  }
+
+  if (result.action === "unknown") {
+    showVoiceAgentMessage(result.message || "I can help with scores, holes, yardages, and saved targets.", true);
+    return true;
+  }
+
+  if (result.confidence < AI_VOICE_CONFIDENCE_THRESHOLD) {
+    return false;
+  }
+
+  if (result.action === "save_scores") {
+    return executeAgentSaveScores(result);
+  }
+
+  if (result.action === "change_score") {
+    return executeAgentChangeScore(result);
+  }
+
+  if (result.action === "set_par") {
+    return executeAgentSetPar(result);
+  }
+
+  if (result.action === "go_to_hole") {
+    return executeAgentGoToHole(result);
+  }
+
+  if (result.action === "answer_question") {
+    return executeAgentAnswerQuestion(result);
+  }
+
+  if (result.action === "get_green_yardage") {
+    showVoiceAgentMessage(result.message || "Getting yardage...", false);
+    getYardageToGreen(true);
+    return true;
+  }
+
+  if (result.action === "get_hazard_distance") {
+    showVoiceAgentMessage(result.message || "Getting hazard distance...", false);
+    handleAgentHazardDistance(result);
+    return true;
+  }
+
+  return false;
+}
+
+function executeAgentSaveScores(result) {
+  const scores = Array.isArray(result.payload.scores) ? result.payload.scores : [];
+
+  if (scores.length === 0) {
+    return false;
+  }
+
+  const validatedScores = [];
+
+  for (const entry of scores) {
+    const player = getExactPlayerName(entry.player);
+    const hole = Number(entry.hole || round.currentHole);
+    const score = Number(entry.score);
+
+    if (!player || !isValidHoleNumber(hole) || !isValidScoreValue(score)) {
+      return false;
+    }
+
+    validatedScores.push({
+      player: player,
+      hole: hole,
+      score: score
+    });
+  }
+
+  validatedScores.forEach(entry => {
+    ensurePlayerScoreBucket(entry.player);
+    round.scores[entry.player][entry.hole] = entry.score;
+  });
+
+  saveRoundToStorage();
+  renderCurrentHole();
+  renderScorecard();
+
+  const response = result.message || buildScoreSaveMessage(validatedScores);
+  showVoiceAgentMessage(response, result.speak);
+  return true;
+}
+
+function executeAgentChangeScore(result) {
+  const player = getExactPlayerName(result.payload.player);
+  const hole = Number(result.payload.hole || round.currentHole);
+  const score = Number(result.payload.score);
+
+  if (!player || !isValidHoleNumber(hole) || !isValidScoreValue(score)) {
+    return false;
+  }
+
+  ensurePlayerScoreBucket(player);
+  round.scores[player][hole] = score;
+  saveRoundToStorage();
+  renderCurrentHole();
+  renderScorecard();
+
+  showVoiceAgentMessage(result.message || `Updated ${player}'s score on Hole ${hole} to ${score}.`, result.speak);
+  return true;
+}
+
+function executeAgentSetPar(result) {
+  const hole = Number(result.payload.hole || round.currentHole);
+  const par = Number(result.payload.par);
+
+  if (!isValidHoleNumber(hole) || !isValidParValue(par)) {
+    return false;
+  }
+
+  if (!round.holePars) {
+    round.holePars = {};
+  }
+
+  round.holePars[hole] = par;
+
+  if (hole === round.currentHole) {
+    holeParInput.value = String(par);
+  }
+
+  saveRoundToStorage();
+  renderHoleParInput();
+  renderScorecard();
+
+  showVoiceAgentMessage(result.message || `Hole ${hole} is now a par ${par}.`, result.speak);
+  return true;
+}
+
+function executeAgentGoToHole(result) {
+  const hole = Number(result.payload.hole);
+
+  if (!isValidHoleNumber(hole)) {
+    return false;
+  }
+
+  saveScores();
+  round.currentHole = hole;
+  saveRoundToStorage();
+  renderCurrentHole();
+  renderScorecard();
+
+  showVoiceAgentMessage(result.message || `Moved to Hole ${round.currentHole}.`, result.speak);
+  return true;
+}
+
+function executeAgentAnswerQuestion(result) {
+  const response = result.payload.answer || result.message;
+
+  if (!response) {
+    return false;
+  }
+
+  showVoiceAgentMessage(response, result.speak);
+  return true;
+}
+
+function handleAgentHazardDistance(result) {
+  const targetName = String(result.payload.targetName || "").trim().toLowerCase();
+
+  if (!targetName) {
+    handleHazardVoiceCommand("what hazards are ahead");
+    return;
+  }
+
+  handleHazardVoiceCommand(`how far to ${targetName}`);
+}
+
+function showVoiceAgentMessage(text, shouldSpeak) {
+  message.textContent = text;
+  voiceStatus.textContent = text;
+
+  if (shouldSpeak) {
+    speakText(text);
+  }
+}
+
+function getExactPlayerName(playerName) {
+  if (!playerName) {
+    return "";
+  }
+
+  const normalizedName = String(playerName).trim().toLowerCase();
+
+  return round.players.find(player => {
+    return player.toLowerCase() === normalizedName;
+  }) || "";
+}
+
+function isValidScoreValue(score) {
+  return Number.isInteger(score) && score >= 1 && score <= 20;
+}
+
+function isValidHoleNumber(hole) {
+  return Number.isInteger(hole) && hole >= 1 && hole <= round.totalHoles;
+}
+
+function isValidParValue(par) {
+  return Number.isInteger(par) && par >= 3 && par <= 6;
+}
+
+function ensurePlayerScoreBucket(player) {
+  if (!round.scores) {
+    round.scores = {};
+  }
+
+  if (!round.scores[player]) {
+    round.scores[player] = {};
+  }
+}
+
+function buildScoreSaveMessage(scores) {
+  const parts = scores.map(entry => {
+    return `${entry.player} ${entry.score}`;
+  });
+
+  return `Saved for Hole ${round.currentHole}: ${parts.join(", ")}.`;
 }
 
 function parseScoreCommand(command) {

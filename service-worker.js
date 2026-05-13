@@ -1,4 +1,4 @@
-const CACHE_NAME = "golf-assistant-cache-v3";
+const CACHE_NAME = "golf-assistant-cache-v5";
 
 const FILES_TO_CACHE = [
   "./",
@@ -6,7 +6,7 @@ const FILES_TO_CACHE = [
   "./style.css",
   "./app.js",
   "./manifest.webmanifest",
-  "./icons/icon.svg",
+  "./icons/icons.svg",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
 ];
@@ -38,6 +38,12 @@ self.addEventListener("activate", function (event) {
 });
 
 self.addEventListener("fetch", function (event) {
+  const requestUrl = new URL(event.request.url);
+
+  if (event.request.method !== "GET" || requestUrl.pathname.startsWith("/api/")) {
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request).then(function (cachedResponse) {
       if (cachedResponse) {
