@@ -10,6 +10,7 @@ const __dirname = path.dirname(__filename);
 loadDotEnv();
 
 const port = Number(process.env.PORT || 3000);
+const host = process.env.HOST || "0.0.0.0";
 const model = process.env.OPENAI_MODEL || "gpt-5-mini";
 
 const mimeTypes = {
@@ -41,6 +42,11 @@ createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/transcribe") {
+      await handleTranscriptionRequest(req, res);
+      return;
+    }
+
     if (req.method !== "GET") {
       sendJson(res, 405, { error: "Method not allowed." });
       return;
@@ -51,8 +57,10 @@ createServer(async (req, res) => {
     console.error("Server error:", error);
     sendJson(res, 500, { error: "Internal server error." });
   }
-}).listen(port, "127.0.0.1", () => {
-  console.log(`Golf Assistant running at http://127.0.0.1:${port}/`);
+}).listen(port, host, () => {
+  console.log(`Golf Assistant running at http://${host}:${port}/`);
+  console.log(`On this computer: http://127.0.0.1:${port}/`);
+  console.log("On your phone: use this computer's Wi-Fi IPv4 address with the same port.");
 });
 
 async function handleVoiceAgentRequest(req, res) {
@@ -96,6 +104,43 @@ async function handleVoiceAgentRequest(req, res) {
     console.error("Voice agent error:", error);
     sendJson(res, 502, {
       error: "The AI voice agent could not process that request."
+    });
+  }
+}
+
+async function handleTranscriptionRequest(req, res) {
+  if (!process.env.OPENAI_API_KEY) {
+    sendJson(res, 503, {
+      error: "OpenAI API key is not configured. Add OPENAI_API_KEY to .env, then restart the server."
+    });
+    return;
+  }
+
+  let audioBuffer;
+
+  try {
+    audioBuffer = await readRawBody(req, 12 * 1024 * 1024);
+  } catch (error) {
+    sendJson(res, 400, { error: error.message });
+    return;
+  }
+
+  if (!audioBuffer.length) {
+    sendJson(res, 400, { error: "Audio is required." });
+    return;
+  }
+
+  try {
+    const transcript = await transcribeAudio({
+      audioBuffer,
+      contentType: req.headers["content-type"] || "audio/webm"
+    });
+
+    sendJson(res, 200, { transcript });
+  } catch (error) {
+    console.error("Transcription error:", error);
+    sendJson(res, 502, {
+      error: "The audio could not be transcribed."
     });
   }
 }
@@ -163,6 +208,57 @@ async function callVoiceAgent(context) {
   }
 
   return JSON.parse(outputText);
+}
+
+async function transcribeAudio({ audioBuffer, contentType }) {
+  const safeContentType = String(contentType).split(";")[0] || "audio/webm";
+  const extension = getAudioFileExtension(safeContentType);
+  const formData = new FormData();
+
+  formData.append("model", process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe");
+  formData.append("file", new Blob([audioBuffer], { type: safeContentType }), `voice-command.${extension}`);
+
+  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
+    },
+    body: formData
+  });
+
+  const bodyText = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`OpenAI transcription API ${response.status}: ${bodyText}`);
+  }
+
+  const body = JSON.parse(bodyText);
+
+  if (typeof body.text !== "string") {
+    throw new Error("No transcript text returned by the transcription model.");
+  }
+
+  return body.text.trim();
+}
+
+function getAudioFileExtension(contentType) {
+  if (contentType.includes("mp4")) {
+    return "mp4";
+  }
+
+  if (contentType.includes("mpeg")) {
+    return "mp3";
+  }
+
+  if (contentType.includes("ogg")) {
+    return "ogg";
+  }
+
+  if (contentType.includes("wav")) {
+    return "wav";
+  }
+
+  return "webm";
 }
 
 function extractOutputText(responseBody) {
@@ -243,6 +339,31 @@ function readJsonBody(req, maxBytes) {
       } catch {
         reject(new Error("Request body must be valid JSON."));
       }
+    });
+
+    req.on("error", reject);
+  });
+}
+
+function readRawBody(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+
+    req.on("data", chunk => {
+      size += chunk.length;
+
+      if (size > maxBytes) {
+        reject(new Error("Audio is too large."));
+        req.destroy();
+        return;
+      }
+
+      chunks.push(chunk);
+    });
+
+    req.on("end", () => {
+      resolve(Buffer.concat(chunks));
     });
 
     req.on("error", reject);

@@ -1,4 +1,4 @@
-const CACHE_NAME = "golf-assistant-cache-v5";
+const CACHE_NAME = "golf-assistant-cache-v8";
 
 const FILES_TO_CACHE = [
   "./",

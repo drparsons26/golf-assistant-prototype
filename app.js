@@ -10,6 +10,7 @@ let round = {
 };
 
 const setupSection = document.getElementById("setupSection");
+const startSetupSection = document.getElementById("startSetupSection");
 const roundSection = document.getElementById("roundSection");
 const scorecardSection = document.getElementById("scorecardSection");
 
@@ -70,6 +71,10 @@ const commandHelpPanel = document.getElementById("commandHelpPanel");
 
 const enableAudioBtn = document.getElementById("enableAudioBtn");
 const audioStatus = document.getElementById("audioStatus");
+const voiceCommandsSection = document.getElementById("voiceCommandsSection");
+const settingsSection = document.getElementById("settingsSection");
+const roundParSummary = document.getElementById("roundParSummary");
+const navButtons = document.querySelectorAll("[data-nav-target]");
 
 let recognition = null;
 let selectedCourseSetup = null;
@@ -84,6 +89,12 @@ let voiceFinalTranscript = "";
 let voiceInterimTranscript = "";
 let voiceSilenceTimer = null;
 let isFinalizingVoiceCommand = false;
+let audioRecorder = null;
+let audioChunks = [];
+let audioRecordingStream = null;
+let audioRecordingTimer = null;
+let isAudioRecordingFallback = false;
+const AUDIO_RECORDING_MAX_MS = 12000;
 
 startRoundBtn.addEventListener("click", startRound);
 resetRoundBtn.addEventListener("click", resetRound);
@@ -109,6 +120,12 @@ enableAudioBtn.addEventListener("click", enableVoiceResponses);
 if (voiceBtn) {
   voiceBtn.addEventListener("click", startVoiceRecognition);
 }
+
+navButtons.forEach(button => {
+  button.addEventListener("click", function () {
+    showAppScreen(button.dataset.navTarget);
+  });
+});
 
 window.addEventListener("load", function () {
   renderSavedCourseOptions();
@@ -156,15 +173,73 @@ if (selectedCourseSetup) {
 }
 
 function showRoundScreen() {
-  setupSection.classList.add("hidden");
-  roundSection.classList.remove("hidden");
-  yardageSection.classList.remove("hidden");
-  scorecardSection.classList.remove("hidden");
+  showAppScreen("round");
+}
+
+function showAppScreen(target) {
+  const normalizedTarget = target || "home";
+  const screens = {
+    home: setupSection,
+    startSetup: startSetupSection,
+    round: roundSection,
+    scorecard: scorecardSection,
+    yardage: yardageSection,
+    voiceCommandsSection: voiceCommandsSection,
+    settingsSection: settingsSection
+  };
+
+  if (normalizedTarget === "course-library-panel") {
+    showAppScreen("startSetup");
+    const coursePanel = document.getElementById("course-library-panel");
+
+    if (coursePanel) {
+      coursePanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    return;
+  }
+
+  if ((normalizedTarget === "scorecard" || normalizedTarget === "yardage") && round.players.length === 0) {
+    showAppScreen("startSetup");
+    return;
+  }
+
+  if (normalizedTarget === "scorecard") {
+    renderScorecard();
+  }
+
+  if (normalizedTarget === "yardage") {
+    renderHoleTargetInputs();
+    renderHoleHazards();
+  }
+
+  Object.values(screens).forEach(screen => {
+    if (screen) {
+      screen.classList.add("hidden");
+    }
+  });
+
+  const activeScreen = screens[normalizedTarget] || setupSection;
+  activeScreen.classList.remove("hidden");
+
+  navButtons.forEach(button => {
+    const isActive =
+      button.dataset.navTarget === normalizedTarget ||
+      (normalizedTarget === "startSetup" && button.dataset.navTarget === "home") ||
+      (normalizedTarget === "round" && button.dataset.navTarget === "home" && round.players.length === 0);
+
+    button.classList.toggle("active", isActive);
+  });
+
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function renderCurrentHole() {
   courseTitle.textContent = round.courseName;
   holeTitle.textContent = `Hole ${round.currentHole}`;
+  if (roundParSummary) {
+    roundParSummary.textContent = getHolePar(round.currentHole);
+  }
   scoreInputs.innerHTML = "";
 
   round.players.forEach((player, index) => {
@@ -402,10 +477,7 @@ function resetRound() {
   holePars: {}
 };
 
-  setupSection.classList.remove("hidden");
-  roundSection.classList.add("hidden");
-  yardageSection.classList.add("hidden");
-  scorecardSection.classList.add("hidden");
+  showAppScreen("home");
 
   courseNameInput.value = "";
   playerNamesInput.value = "";
@@ -446,8 +518,21 @@ function setupVoiceRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   if (!SpeechRecognition) {
+    if (canUseAudioRecordingFallback()) {
+      if (voiceStatus) {
+        voiceStatus.textContent = "Voice recording ready. Tap Start Listening, speak, then tap Stop.";
+      }
+
+      if (voiceBtn) {
+        voiceBtn.disabled = false;
+        voiceBtn.textContent = "Start Listening";
+      }
+
+      return;
+    }
+
     if (voiceStatus) {
-      voiceStatus.textContent = "Voice recognition is not supported in this browser.";
+      voiceStatus.textContent = "Voice needs microphone recording support. On phones, open the app with HTTPS or use a supported browser.";
     }
 
     if (voiceBtn) {
@@ -523,7 +608,7 @@ function setupVoiceRecognition() {
 }
 async function startVoiceRecognition() {
   if (!recognition) {
-    alert("Voice recognition is not available in this browser.");
+    await toggleAudioRecordingFallback();
     return;
   }
 
@@ -554,8 +639,201 @@ async function startVoiceRecognition() {
   }
 }
 
+function canUseAudioRecordingFallback() {
+  return Boolean(
+    navigator.mediaDevices &&
+    navigator.mediaDevices.getUserMedia &&
+    window.MediaRecorder
+  );
+}
+
+async function toggleAudioRecordingFallback() {
+  if (!canUseAudioRecordingFallback()) {
+    alert("Voice recording is not available in this browser. On phones, the app usually needs to be opened with HTTPS for microphone access.");
+    return;
+  }
+
+  if (round.players.length === 0) {
+    alert("Start a round before using voice entry.");
+    return;
+  }
+
+  if (isAudioRecordingFallback) {
+    stopAudioRecordingFallback();
+    return;
+  }
+
+  await startAudioRecordingFallback();
+}
+
+async function startAudioRecordingFallback() {
+  try {
+    resetVoiceCaptureState();
+    clearAudioRecordingFallback();
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = getSupportedAudioMimeType();
+    const recorderOptions = mimeType ? { mimeType } : undefined;
+
+    audioChunks = [];
+    audioRecordingStream = stream;
+    audioRecorder = new MediaRecorder(stream, recorderOptions);
+
+    audioRecorder.ondataavailable = function (event) {
+      if (event.data && event.data.size > 0) {
+        audioChunks.push(event.data);
+      }
+    };
+
+    audioRecorder.onstop = function () {
+      handleAudioRecordingComplete();
+    };
+
+    audioRecorder.start();
+    isAudioRecordingFallback = true;
+    isVoiceCaptureActive = true;
+    voiceStatus.textContent = "Listening... tap Stop when you are done.";
+    voiceBtn.textContent = "Stop Listening";
+
+    audioRecordingTimer = setTimeout(function () {
+      if (isAudioRecordingFallback) {
+        stopAudioRecordingFallback();
+      }
+    }, AUDIO_RECORDING_MAX_MS);
+  } catch (error) {
+    clearAudioRecordingFallback();
+    voiceBtn.textContent = "Start Listening";
+    voiceStatus.textContent = getAudioRecordingErrorMessage(error);
+  }
+}
+
+function stopAudioRecordingFallback() {
+  clearTimeout(audioRecordingTimer);
+  audioRecordingTimer = null;
+
+  if (audioRecorder && audioRecorder.state !== "inactive") {
+    voiceStatus.textContent = "Heard it. Transcribing...";
+    voiceBtn.textContent = "Transcribing...";
+    audioRecorder.stop();
+    return;
+  }
+
+  clearAudioRecordingFallback();
+}
+
+async function handleAudioRecordingComplete() {
+  const mimeType = audioRecorder ? audioRecorder.mimeType : "audio/webm";
+  const audioBlob = new Blob(audioChunks, { type: mimeType || "audio/webm" });
+
+  stopAudioTracks();
+  isAudioRecordingFallback = false;
+  isVoiceCaptureActive = false;
+
+  if (!audioBlob.size) {
+    voiceStatus.textContent = "I did not hear anything. Tap Start Listening and try again.";
+    voiceBtn.textContent = "Start Listening";
+    clearAudioRecordingFallback();
+    return;
+  }
+
+  try {
+    isHandlingVoiceCommand = true;
+    const transcript = await transcribeVoiceAudio(audioBlob);
+
+    if (!transcript) {
+      voiceStatus.textContent = "I could not make out the words. Tap Start Listening and try again.";
+      return;
+    }
+
+    transcriptText.textContent = transcript;
+    voiceStatus.textContent = "Heard it. Thinking...";
+    await handleVoiceCommand(transcript);
+  } catch (error) {
+    console.warn("Audio transcription failed.", error);
+    voiceStatus.textContent = "I could not transcribe that audio. Check microphone access and try again.";
+  } finally {
+    isHandlingVoiceCommand = false;
+    isFinalizingVoiceCommand = false;
+    voiceBtn.textContent = "Start Listening";
+    clearAudioRecordingFallback();
+  }
+}
+
+async function transcribeVoiceAudio(audioBlob) {
+  const response = await fetch("/api/transcribe", {
+    method: "POST",
+    headers: {
+      "Content-Type": audioBlob.type || "audio/webm"
+    },
+    body: audioBlob
+  });
+
+  const body = await response.json().catch(function () {
+    return {};
+  });
+
+  if (!response.ok) {
+    throw new Error(body.error || "Audio transcription failed.");
+  }
+
+  return typeof body.transcript === "string" ? body.transcript.trim() : "";
+}
+
+function getSupportedAudioMimeType() {
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus"
+  ];
+
+  if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) {
+    return "";
+  }
+
+  return candidates.find(type => MediaRecorder.isTypeSupported(type)) || "";
+}
+
+function getAudioRecordingErrorMessage(error) {
+  if (!window.isSecureContext) {
+    return "Phone browsers require HTTPS for microphone access. The page can load over Wi-Fi, but voice needs HTTPS.";
+  }
+
+  if (error && (error.name === "NotAllowedError" || error.name === "SecurityError")) {
+    return "Microphone access is blocked. Allow microphone access for this site, then tap Start Listening again.";
+  }
+
+  if (error && error.name === "NotFoundError") {
+    return "No microphone was found. Check your device microphone, then tap Start Listening again.";
+  }
+
+  return "Voice recording could not start. Check microphone permissions and try again.";
+}
+
+function clearAudioRecordingFallback() {
+  clearTimeout(audioRecordingTimer);
+  audioRecordingTimer = null;
+  audioRecorder = null;
+  audioChunks = [];
+  stopAudioTracks();
+  isAudioRecordingFallback = false;
+}
+
+function stopAudioTracks() {
+  if (!audioRecordingStream) {
+    return;
+  }
+
+  audioRecordingStream.getTracks().forEach(track => {
+    track.stop();
+  });
+
+  audioRecordingStream = null;
+}
+
 function resetVoiceCaptureState() {
   clearVoiceSilenceTimer();
+  clearAudioRecordingFallback();
   isVoiceCaptureActive = false;
   isFinalizingVoiceCommand = false;
   voiceFinalTranscript = "";
@@ -2710,6 +2988,9 @@ function renderHoleParInput() {
   const par = getHolePar(round.currentHole);
 
   holeParInput.value = par;
+  if (roundParSummary) {
+    roundParSummary.textContent = par;
+  }
   parSummary.textContent = `Hole ${round.currentHole} is a par ${par}. Total course par: ${getTotalCoursePar()}.`;
 }
 
@@ -2808,15 +3089,7 @@ function formatToPar(toPar) {
 // -------------------------------
 
 function toggleCommandHelp() {
-  const isHidden = commandHelpPanel.classList.contains("hidden");
-
-  if (isHidden) {
-    commandHelpPanel.classList.remove("hidden");
-    toggleCommandHelpBtn.textContent = "Hide Voice Commands";
-  } else {
-    commandHelpPanel.classList.add("hidden");
-    toggleCommandHelpBtn.textContent = "Show Voice Commands";
-  }
+  showAppScreen("voiceCommandsSection");
 }
 
 // -------------------------------
