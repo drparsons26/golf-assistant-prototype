@@ -71,7 +71,6 @@ const commandHelpPanel = document.getElementById("commandHelpPanel");
 
 const enableAudioBtn = document.getElementById("enableAudioBtn");
 const audioStatus = document.getElementById("audioStatus");
-const voiceCommandsSection = document.getElementById("voiceCommandsSection");
 const settingsSection = document.getElementById("settingsSection");
 const roundParSummary = document.getElementById("roundParSummary");
 const navButtons = document.querySelectorAll("[data-nav-target]");
@@ -184,7 +183,6 @@ function showAppScreen(target) {
     round: roundSection,
     scorecard: scorecardSection,
     yardage: yardageSection,
-    voiceCommandsSection: voiceCommandsSection,
     settingsSection: settingsSection
   };
 
@@ -199,9 +197,13 @@ function showAppScreen(target) {
     return;
   }
 
-  if ((normalizedTarget === "scorecard" || normalizedTarget === "yardage") && round.players.length === 0) {
+  if ((normalizedTarget === "round" || normalizedTarget === "scorecard" || normalizedTarget === "yardage") && round.players.length === 0) {
     showAppScreen("startSetup");
     return;
+  }
+
+  if (normalizedTarget === "round") {
+    renderCurrentHole();
   }
 
   if (normalizedTarget === "scorecard") {
@@ -3089,7 +3091,12 @@ function formatToPar(toPar) {
 // -------------------------------
 
 function toggleCommandHelp() {
-  showAppScreen("voiceCommandsSection");
+  if (!commandHelpPanel) {
+    return;
+  }
+
+  const isHidden = commandHelpPanel.classList.toggle("hidden");
+  toggleCommandHelpBtn.textContent = isHidden ? "Show Voice Commands" : "Hide Voice Commands";
 }
 
 // -------------------------------

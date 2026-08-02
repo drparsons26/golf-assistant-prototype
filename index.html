@@ -56,9 +56,9 @@
             <span>▦</span>
             <strong>Scorecard</strong>
           </button>
-          <button type="button" class="feature-tile" data-nav-target="voiceCommandsSection">
-            <span>▥</span>
-            <strong>Voice Commands</strong>
+          <button type="button" class="feature-tile" data-nav-target="round">
+            <span>●</span>
+            <strong>Active Round</strong>
           </button>
           <button type="button" class="feature-tile wide-tile" data-nav-target="settingsSection">
             <span>⚙</span>
@@ -179,6 +179,29 @@
           <button id="toggleCommandHelpBtn" type="button" class="secondary-button">
             Show Voice Commands
           </button>
+
+          <div id="commandHelpPanel" class="command-help hidden">
+            <div class="command-category">
+              <h5>Score Entry</h5>
+              <p>“John scored 4, Josh scored 3, and I scored 4.”</p>
+              <p>“I had par and Sam had bogey.”</p>
+            </div>
+            <div class="command-category">
+              <h5>Score Questions</h5>
+              <p>“Who is winning?”</p>
+              <p>“How am I doing compared to Sam?”</p>
+            </div>
+            <div class="command-category">
+              <h5>Round Control</h5>
+              <p>“Next hole.”</p>
+              <p>“Go to hole 5.”</p>
+            </div>
+            <div class="command-category">
+              <h5>Yardage</h5>
+              <p>“How far to the green?”</p>
+              <p>“What hazards are ahead?”</p>
+            </div>
+          </div>
 
           <div id="voiceStatus">Voice ready.</div>
           <div id="transcriptText"></div>
@@ -340,37 +363,6 @@
         </div>
       </section>
 
-      <section id="voiceCommandsSection" class="screen voice-commands-screen hidden">
-        <div class="page-title-bar">
-          <button class="icon-button" type="button" data-nav-target="round" aria-label="Back to round">‹</button>
-          <h2>Voice Commands</h2>
-          <span></span>
-        </div>
-        <p class="screen-note">Speak naturally. These examples show what the AI caddie understands.</p>
-        <div id="commandHelpPanel" class="command-help">
-          <div class="command-category">
-            <h5>Score Entry</h5>
-            <p>“John scored 4, Josh scored 3, and I scored 4.”</p>
-            <p>“I had par and Sam had bogey.”</p>
-          </div>
-          <div class="command-category">
-            <h5>Score Questions</h5>
-            <p>“Who is winning?”</p>
-            <p>“How am I doing compared to Sam?”</p>
-          </div>
-          <div class="command-category">
-            <h5>Round Control</h5>
-            <p>“Next hole.”</p>
-            <p>“Go to hole 5.”</p>
-          </div>
-          <div class="command-category">
-            <h5>Yardage</h5>
-            <p>“How far to the green?”</p>
-            <p>“What hazards are ahead?”</p>
-          </div>
-        </div>
-      </section>
-
       <section id="settingsSection" class="screen settings-screen hidden">
         <div class="page-title-bar">
           <button class="icon-button" type="button" data-nav-target="home" aria-label="Back home">‹</button>
@@ -397,7 +389,7 @@
       <button type="button" data-nav-target="home" class="active"><span>⌂</span>Home</button>
       <button type="button" data-nav-target="scorecard"><span>▦</span>Scorecard</button>
       <button type="button" data-nav-target="yardage"><span>⚑</span>Yardage</button>
-      <button type="button" data-nav-target="voiceCommandsSection"><span>▥</span>Voice</button>
+      <button type="button" data-nav-target="round"><span>●</span>Round</button>
       <button type="button" data-nav-target="settingsSection"><span>⋯</span>More</button>
     </nav>
   </div>
