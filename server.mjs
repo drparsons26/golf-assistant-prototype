@@ -307,6 +307,8 @@ function buildAgentInstructions() {
     "Return exactly one JSON object that matches the schema. Do not include markdown.",
     "Prefer direct, concise messages suitable for both screen display and text-to-speech.",
     "When the user says I, me, my, or myself, treat that as the first player in round.players.",
+    "Use start_round when the user wants to begin a round and clearly gives a course name plus at least one player. If players are not clear, use clarify.",
+    "Use end_round when the user wants to finish, end, close, or complete the active round. This saves and summarizes; it does not delete the round.",
     "For score language, par means the hole par, birdie means par minus 1, bogey means par plus 1, double bogey means par plus 2, eagle means par minus 2.",
     "Only choose a mutating action when the player, hole, and value are clear.",
     "Use clarify for ambiguous player names, unclear holes, or unclear score values.",
@@ -427,6 +429,8 @@ const voiceAgentSchema = {
     action: {
       type: "string",
       enum: [
+        "start_round",
+        "end_round",
         "save_scores",
         "change_score",
         "set_par",
@@ -464,6 +468,12 @@ const voiceAgentSchema = {
         score: { type: "integer", minimum: 1, maximum: 20 },
         hole: { type: "integer", minimum: 1, maximum: 18 },
         par: { type: "integer", minimum: 3, maximum: 6 },
+        courseName: { type: "string" },
+        players: {
+          type: "array",
+          items: { type: "string" }
+        },
+        totalHoles: { type: "integer", enum: [0, 9, 18] },
         questionType: { type: "string" },
         targetName: { type: "string" },
         answer: { type: "string" }
@@ -474,6 +484,9 @@ const voiceAgentSchema = {
         "score",
         "hole",
         "par",
+        "courseName",
+        "players",
+        "totalHoles",
         "questionType",
         "targetName",
         "answer"

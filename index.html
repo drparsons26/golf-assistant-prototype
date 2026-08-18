@@ -38,9 +38,9 @@
           </div>
         </div>
 
-        <button class="home-start-button" type="button" data-nav-target="startSetup">
+        <button id="homeStartRoundBtn" class="home-start-button" type="button" data-nav-target="startSetup">
           <span aria-hidden="true">▶</span>
-          Start Round
+          <strong>Start Round</strong>
         </button>
 
         <div class="home-actions">
@@ -93,6 +93,14 @@
           </select>
 
           <button id="startRoundBtn" type="button">▶ Start Round</button>
+        </div>
+
+        <div class="voice-box app-card pre-round-voice-card">
+          <h3>Voice Caddie</h3>
+          <p>Start hands-free. Try “Start a round at Prairie Pines with Alex and Sam.”</p>
+
+          <button id="preRoundVoiceBtn" type="button">🎙 Start Listening</button>
+          <div id="preRoundVoiceStatus">Voice ready.</div>
         </div>
 
         <div id="course-library-panel" class="saved-course-box app-card">
@@ -224,9 +232,7 @@
         </div>
         <div class="app-card">
           <div id="leaderText"></div>
-          <div class="table-wrapper">
-            <table id="scorecardTable"></table>
-          </div>
+          <div id="scorecardTable" class="scorecard-list"></div>
         </div>
       </section>
 

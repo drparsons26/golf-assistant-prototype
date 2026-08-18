@@ -557,6 +557,7 @@ button.danger {
 #parSummary,
 #message,
 #voiceStatus,
+#preRoundVoiceStatus,
 #yardageResult,
 #leaderText,
 #audioStatus {
@@ -578,7 +579,8 @@ button.danger {
   line-height: 1.42;
 }
 
-#voiceBtn {
+#voiceBtn,
+#preRoundVoiceBtn {
   background: linear-gradient(180deg, var(--green-700), var(--green-900));
 }
 
@@ -802,52 +804,84 @@ button.danger {
   border-bottom: 0;
 }
 
-.table-wrapper {
+.scorecard-list {
+  display: grid;
+  gap: 10px;
   margin-top: 12px;
-  overflow: auto;
+}
+
+.scorecard-totals,
+.scorecard-hole-card {
   border: 1px solid var(--line);
   border-radius: var(--radius);
-}
-
-table {
-  width: 100%;
-  min-width: 760px;
-  border-collapse: separate;
-  border-spacing: 0;
   background: #fff;
-  font-size: 13px;
+  overflow: hidden;
 }
 
-th,
-td {
-  padding: 10px 9px;
-  text-align: center;
-  border-right: 1px solid var(--soft-line);
+.scorecard-total-row,
+.scorecard-player-line,
+.scorecard-hole-header {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--soft-line);
 }
 
-th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--green-050);
-  color: #263429;
+.scorecard-total-row:last-child,
+.scorecard-player-line:last-child {
+  border-bottom: 0;
+}
+
+.scorecard-total-row {
+  grid-template-columns: 1fr auto minmax(54px, auto);
+}
+
+.scorecard-total-row span,
+.scorecard-player-line span {
+  min-width: 0;
   font-weight: 900;
 }
 
-td:first-child,
-th:first-child {
-  position: sticky;
-  left: 0;
-  z-index: 1;
-  text-align: left;
-  background: #fff;
+.scorecard-total-row strong,
+.scorecard-player-line strong {
+  color: var(--green-900);
+  font-size: 18px;
+}
+
+.scorecard-total-row em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+  text-align: right;
+}
+
+.scorecard-hole-header {
+  grid-template-columns: 1fr auto;
+  background: var(--green-050);
+}
+
+.scorecard-hole-header h3 {
+  color: var(--green-900);
+  font-size: 16px;
+}
+
+.scorecard-hole-header span {
+  color: var(--green-800);
+  font-size: 13px;
   font-weight: 900;
 }
 
-th:first-child {
-  z-index: 3;
-  background: var(--green-050);
+.scorecard-hole-card.current-hole {
+  border-color: rgba(17, 101, 52, 0.55);
+  box-shadow: 0 8px 18px rgba(17, 101, 52, 0.12);
+}
+
+.scorecard-hole-card.current-hole .scorecard-hole-header {
+  background: var(--green-100);
 }
 
 .command-help {

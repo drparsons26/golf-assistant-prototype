@@ -18,6 +18,7 @@ const courseNameInput = document.getElementById("courseName");
 const playerNamesInput = document.getElementById("playerNames");
 const totalHolesSelect = document.getElementById("totalHoles");
 
+const homeStartRoundBtn = document.getElementById("homeStartRoundBtn");
 const startRoundBtn = document.getElementById("startRoundBtn");
 const resetRoundBtn = document.getElementById("resetRoundBtn");
 const saveScoresBtn = document.getElementById("saveScoresBtn");
@@ -32,7 +33,9 @@ const scorecardTable = document.getElementById("scorecardTable");
 const leaderText = document.getElementById("leaderText");
 
 const voiceBtn = document.getElementById("voiceBtn");
+const preRoundVoiceBtn = document.getElementById("preRoundVoiceBtn");
 const voiceStatus = document.getElementById("voiceStatus");
+const preRoundVoiceStatus = document.getElementById("preRoundVoiceStatus");
 const transcriptText = document.getElementById("transcriptText");
 
 const yardageSection = document.getElementById("yardageSection");
@@ -120,6 +123,10 @@ if (voiceBtn) {
   voiceBtn.addEventListener("click", startVoiceRecognition);
 }
 
+if (preRoundVoiceBtn) {
+  preRoundVoiceBtn.addEventListener("click", startVoiceRecognition);
+}
+
 navButtons.forEach(button => {
   button.addEventListener("click", function () {
     showAppScreen(button.dataset.navTarget);
@@ -129,6 +136,7 @@ navButtons.forEach(button => {
 window.addEventListener("load", function () {
   renderSavedCourseOptions();
   loadSavedRound();
+  updateRoundEntryButtons();
   setupVoiceRecognition();
 });
 
@@ -166,9 +174,45 @@ if (selectedCourseSetup) {
   });
 
   saveRoundToStorage();
+  updateRoundEntryButtons();
   showRoundScreen();
   renderCurrentHole();
   renderScorecard();
+}
+
+function updateRoundEntryButtons() {
+  const hasActiveRound = round.players.length > 0;
+
+  if (homeStartRoundBtn) {
+    homeStartRoundBtn.dataset.navTarget = hasActiveRound ? "round" : "startSetup";
+    homeStartRoundBtn.innerHTML = hasActiveRound
+      ? '<span aria-hidden="true">●</span><strong>See Current Round</strong>'
+      : '<span aria-hidden="true">▶</span><strong>Start Round</strong>';
+  }
+}
+
+function setVoiceButtonText(text) {
+  [voiceBtn, preRoundVoiceBtn].forEach(button => {
+    if (button) {
+      button.textContent = text;
+    }
+  });
+}
+
+function setVoiceButtonsDisabled(isDisabled) {
+  [voiceBtn, preRoundVoiceBtn].forEach(button => {
+    if (button) {
+      button.disabled = isDisabled;
+    }
+  });
+}
+
+function setVoiceStatus(text) {
+  [voiceStatus, preRoundVoiceStatus].forEach(statusElement => {
+    if (statusElement) {
+      statusElement.textContent = text;
+    }
+  });
 }
 
 function showRoundScreen() {
@@ -322,48 +366,60 @@ function previousHole() {
 
 function renderScorecard() {
   scorecardTable.innerHTML = "";
+  scorecardTable.className = "scorecard-list";
 
-  const headerRow = document.createElement("tr");
-  headerRow.innerHTML = `<th>Player</th>`;
+  const totals = document.createElement("div");
+  totals.className = "scorecard-totals";
 
-  for (let hole = 1; hole <= round.totalHoles; hole++) {
-    headerRow.innerHTML += `<th>${hole}</th>`;
-  }
-
-  headerRow.innerHTML += `<th>Total</th>`;
-  headerRow.innerHTML += `<th>To Par</th>`;
-  scorecardTable.appendChild(headerRow);
-
-  const parRow = document.createElement("tr");
-  parRow.innerHTML = `<td>Par</td>`;
-
-  for (let hole = 1; hole <= round.totalHoles; hole++) {
-    parRow.innerHTML += `<td>${getHolePar(hole)}</td>`;
-  }
-
-  parRow.innerHTML += `<td>${getTotalCoursePar()}</td>`;
-  parRow.innerHTML += `<td>—</td>`;
-  scorecardTable.appendChild(parRow);
+  const parTotal = document.createElement("div");
+  parTotal.className = "scorecard-total-row";
+  parTotal.innerHTML = `<span>Par</span><strong>${getTotalCoursePar()}</strong><em>Total</em>`;
+  totals.appendChild(parTotal);
 
   round.players.forEach(player => {
-    const row = document.createElement("tr");
-    row.innerHTML = `<td>${player}</td>`;
-
-    for (let hole = 1; hole <= round.totalHoles; hole++) {
-      const score = round.scores[player][hole] || "";
-      row.innerHTML += `<td>${score}</td>`;
-    }
-
-    const playerTotal = getPlayerTotal(player);
+    const total = document.createElement("div");
     const toPar = getPlayerToPar(player);
-
-    row.innerHTML += `<td>${playerTotal}</td>`;
-    row.innerHTML += `<td class="to-par-good">${formatToPar(toPar)}</td>`;
-
-    scorecardTable.appendChild(row);
+    total.className = "scorecard-total-row";
+    total.innerHTML = `<span>${escapeHtml(player)}</span><strong>${getPlayerTotal(player)}</strong><em>${formatToPar(toPar)}</em>`;
+    totals.appendChild(total);
   });
 
+  scorecardTable.appendChild(totals);
+
+  for (let hole = 1; hole <= round.totalHoles; hole++) {
+    const card = document.createElement("section");
+    card.className = "scorecard-hole-card";
+
+    if (hole === round.currentHole) {
+      card.classList.add("current-hole");
+    }
+
+    const header = document.createElement("div");
+    header.className = "scorecard-hole-header";
+    header.innerHTML = `<h3>Hole ${hole}</h3><span>Par ${getHolePar(hole)}</span>`;
+    card.appendChild(header);
+
+    round.players.forEach(player => {
+      const score = round.scores[player][hole] || "";
+      const row = document.createElement("div");
+      row.className = "scorecard-player-line";
+      row.innerHTML = `<span>${escapeHtml(player)}</span><strong>${score || "—"}</strong>`;
+      card.appendChild(row);
+    });
+
+    scorecardTable.appendChild(card);
+  }
+
   renderLeader();
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function getPlayerTotal(player) {
@@ -454,6 +510,7 @@ if (round.targetGreen.lat !== null && round.targetGreen.lng !== null) {
   targetLngInput.value = round.targetGreen.lng;
 }
 
+  updateRoundEntryButtons();
   showRoundScreen();
   renderCurrentHole();
   renderScorecard();
@@ -485,9 +542,7 @@ function resetRound() {
   playerNamesInput.value = "";
   totalHolesSelect.value = "18";
 
-  if (voiceStatus) {
-    voiceStatus.textContent = "Voice ready.";
-  }
+  setVoiceStatus("Voice ready.");
 
   if (transcriptText) {
     transcriptText.textContent = "";
@@ -510,6 +565,7 @@ if (savedCourseSelect) {
 
 holeParInput.value = "4";
 parSummary.textContent = "No par saved yet.";
+updateRoundEntryButtons();
 }
 
 // -------------------------------
@@ -521,26 +577,16 @@ function setupVoiceRecognition() {
 
   if (!SpeechRecognition) {
     if (canUseAudioRecordingFallback()) {
-      if (voiceStatus) {
-        voiceStatus.textContent = "Voice recording ready. Tap Start Listening, speak, then tap Stop.";
-      }
-
-      if (voiceBtn) {
-        voiceBtn.disabled = false;
-        voiceBtn.textContent = "Start Listening";
-      }
+      setVoiceStatus("Voice recording ready. Tap Start Listening, speak, then tap Stop.");
+      setVoiceButtonsDisabled(false);
+      setVoiceButtonText("Start Listening");
 
       return;
     }
 
-    if (voiceStatus) {
-      voiceStatus.textContent = "Voice needs microphone recording support. On phones, open the app with HTTPS or use a supported browser.";
-    }
-
-    if (voiceBtn) {
-      voiceBtn.disabled = true;
-      voiceBtn.textContent = "Voice Not Supported";
-    }
+    setVoiceStatus("Voice needs microphone recording support. On phones, open the app with HTTPS or use a supported browser.");
+    setVoiceButtonsDisabled(true);
+    setVoiceButtonText("Voice Not Supported");
 
     return;
   }
@@ -552,8 +598,8 @@ function setupVoiceRecognition() {
 
   recognition.onstart = function () {
     isVoiceCaptureActive = true;
-    voiceStatus.textContent = "Listening... pause briefly when you are done.";
-    voiceBtn.textContent = "Listening...";
+    setVoiceStatus("Listening... pause briefly when you are done.");
+    setVoiceButtonText("Listening...");
   };
 
   recognition.onresult = function (event) {
@@ -589,12 +635,12 @@ function setupVoiceRecognition() {
     clearVoiceSilenceTimer();
     isVoiceCaptureActive = false;
     isFinalizingVoiceCommand = false;
-    voiceStatus.textContent = getVoiceRecognitionErrorMessage(event.error);
-    voiceBtn.textContent = "Start Listening";
+    setVoiceStatus(getVoiceRecognitionErrorMessage(event.error));
+    setVoiceButtonText("Start Listening");
   };
 
   recognition.onend = function () {
-  voiceBtn.textContent = "Start Listening";
+  setVoiceButtonText("Start Listening");
 
   if (isVoiceCaptureActive && !isFinalizingVoiceCommand && getPendingVoiceTranscript()) {
     scheduleVoiceCommandFinalization(300);
@@ -614,11 +660,6 @@ async function startVoiceRecognition() {
     return;
   }
 
-  if (round.players.length === 0) {
-    alert("Start a round before using voice entry.");
-    return;
-  }
-
   if (isVoiceCaptureActive) {
     finalizeVoiceCommandNow();
     return;
@@ -627,8 +668,8 @@ async function startVoiceRecognition() {
   const microphonePermission = await getMicrophonePermissionState();
 
   if (microphonePermission === "denied") {
-    voiceStatus.textContent = getVoiceRecognitionErrorMessage("not-allowed");
-    voiceBtn.textContent = "Start Listening";
+    setVoiceStatus(getVoiceRecognitionErrorMessage("not-allowed"));
+    setVoiceButtonText("Start Listening");
     return;
   }
 
@@ -636,8 +677,8 @@ async function startVoiceRecognition() {
     resetVoiceCaptureState();
     recognition.start();
   } catch (error) {
-    voiceStatus.textContent = "Voice recognition could not start. Wait a moment, then tap Start Listening again.";
-    voiceBtn.textContent = "Start Listening";
+    setVoiceStatus("Voice recognition could not start. Wait a moment, then tap Start Listening again.");
+    setVoiceButtonText("Start Listening");
   }
 }
 
@@ -652,11 +693,6 @@ function canUseAudioRecordingFallback() {
 async function toggleAudioRecordingFallback() {
   if (!canUseAudioRecordingFallback()) {
     alert("Voice recording is not available in this browser. On phones, the app usually needs to be opened with HTTPS for microphone access.");
-    return;
-  }
-
-  if (round.players.length === 0) {
-    alert("Start a round before using voice entry.");
     return;
   }
 
@@ -694,8 +730,8 @@ async function startAudioRecordingFallback() {
     audioRecorder.start();
     isAudioRecordingFallback = true;
     isVoiceCaptureActive = true;
-    voiceStatus.textContent = "Listening... tap Stop when you are done.";
-    voiceBtn.textContent = "Stop Listening";
+    setVoiceStatus("Listening... tap Stop when you are done.");
+    setVoiceButtonText("Stop Listening");
 
     audioRecordingTimer = setTimeout(function () {
       if (isAudioRecordingFallback) {
@@ -704,8 +740,8 @@ async function startAudioRecordingFallback() {
     }, AUDIO_RECORDING_MAX_MS);
   } catch (error) {
     clearAudioRecordingFallback();
-    voiceBtn.textContent = "Start Listening";
-    voiceStatus.textContent = getAudioRecordingErrorMessage(error);
+    setVoiceButtonText("Start Listening");
+    setVoiceStatus(getAudioRecordingErrorMessage(error));
   }
 }
 
@@ -714,8 +750,8 @@ function stopAudioRecordingFallback() {
   audioRecordingTimer = null;
 
   if (audioRecorder && audioRecorder.state !== "inactive") {
-    voiceStatus.textContent = "Heard it. Transcribing...";
-    voiceBtn.textContent = "Transcribing...";
+    setVoiceStatus("Heard it. Transcribing...");
+    setVoiceButtonText("Transcribing...");
     audioRecorder.stop();
     return;
   }
@@ -732,8 +768,8 @@ async function handleAudioRecordingComplete() {
   isVoiceCaptureActive = false;
 
   if (!audioBlob.size) {
-    voiceStatus.textContent = "I did not hear anything. Tap Start Listening and try again.";
-    voiceBtn.textContent = "Start Listening";
+    setVoiceStatus("I did not hear anything. Tap Start Listening and try again.");
+    setVoiceButtonText("Start Listening");
     clearAudioRecordingFallback();
     return;
   }
@@ -743,20 +779,20 @@ async function handleAudioRecordingComplete() {
     const transcript = await transcribeVoiceAudio(audioBlob);
 
     if (!transcript) {
-      voiceStatus.textContent = "I could not make out the words. Tap Start Listening and try again.";
+      setVoiceStatus("I could not make out the words. Tap Start Listening and try again.");
       return;
     }
 
     transcriptText.textContent = transcript;
-    voiceStatus.textContent = "Heard it. Thinking...";
+    setVoiceStatus("Heard it. Thinking...");
     await handleVoiceCommand(transcript);
   } catch (error) {
     console.warn("Audio transcription failed.", error);
-    voiceStatus.textContent = "I could not transcribe that audio. Check microphone access and try again.";
+    setVoiceStatus("I could not transcribe that audio. Check microphone access and try again.");
   } finally {
     isHandlingVoiceCommand = false;
     isFinalizingVoiceCommand = false;
-    voiceBtn.textContent = "Start Listening";
+    setVoiceButtonText("Start Listening");
     clearAudioRecordingFallback();
   }
 }
@@ -873,8 +909,8 @@ async function finalizeVoiceCommandNow() {
 
   if (!transcript) {
     isVoiceCaptureActive = false;
-    voiceBtn.textContent = "Start Listening";
-    voiceStatus.textContent = "I did not hear anything. Tap Start Listening and try again.";
+    setVoiceButtonText("Start Listening");
+    setVoiceStatus("I did not hear anything. Tap Start Listening and try again.");
     return;
   }
 
@@ -902,7 +938,7 @@ async function finalizeVoiceCommandNow() {
   lastVoiceCommand = normalizedTranscript;
   lastVoiceCommandTime = now;
   transcriptText.textContent = transcript;
-  voiceStatus.textContent = "Heard it. Thinking...";
+  setVoiceStatus("Heard it. Thinking...");
 
   try {
     await handleVoiceCommand(transcript);
@@ -910,7 +946,7 @@ async function finalizeVoiceCommandNow() {
     isHandlingVoiceCommand = false;
     isFinalizingVoiceCommand = false;
     isVoiceCaptureActive = false;
-    voiceBtn.textContent = "Start Listening";
+    setVoiceButtonText("Start Listening");
     voiceFinalTranscript = "";
     voiceInterimTranscript = "";
   }
@@ -953,7 +989,11 @@ function getVoiceRecognitionErrorMessage(error) {
   return "Voice recognition hit a browser error. Check microphone permissions and try again.";
 }
 async function handleVoiceCommand(transcript) {
-  voiceStatus.textContent = "Thinking through that...";
+  if (tryHandleFastLocalVoiceCommand(transcript)) {
+    return;
+  }
+
+  setVoiceStatus("Thinking through that with the AI caddie...");
 
   try {
     const agentResult = await askVoiceAgent(transcript);
@@ -965,7 +1005,304 @@ async function handleVoiceCommand(transcript) {
     console.warn("AI voice agent unavailable, using legacy parser.", error);
   }
 
+  if (round.players.length === 0) {
+    showFastCaddieMessage("Tell me the course to start. For example, say: start a round at Prairie Pines with Alex and Sam.", true);
+    return;
+  }
+
   handleLegacyVoiceCommand(transcript);
+}
+
+function tryHandleFastLocalVoiceCommand(transcript) {
+  const command = transcript.toLowerCase().trim();
+
+  if (!command) {
+    return false;
+  }
+
+  if (tryHandleRoundLifecycleVoiceCommand(command, transcript)) {
+    return true;
+  }
+
+  if (round.players.length === 0) {
+    return false;
+  }
+
+  const correction = parseCorrectionCommand(command);
+
+  if (correction) {
+    round.scores[correction.player][correction.hole] = correction.score;
+
+    saveRoundToStorage();
+    renderCurrentHole();
+    renderScorecard();
+
+    const confirmation = `Updated ${correction.player}'s score on Hole ${correction.hole} to ${correction.score}.`;
+    showFastCaddieMessage(confirmation, false);
+    return true;
+  }
+
+  const navigationMessage = handleRoundNavigationCommand(command);
+
+  if (navigationMessage) {
+    showFastCaddieMessage(navigationMessage, false);
+    return true;
+  }
+
+  const scoreEntries = parseScoreCommand(command);
+
+  if (scoreEntries.length > 0) {
+    scoreEntries.forEach(entry => {
+      round.scores[entry.player][round.currentHole] = entry.score;
+    });
+
+    saveRoundToStorage();
+    renderCurrentHole();
+    renderScorecard();
+
+    const confirmationParts = scoreEntries.map(entry => {
+      return `${entry.player} ${entry.score}`;
+    });
+
+    showFastCaddieMessage(`Saved for Hole ${round.currentHole}: ${confirmationParts.join(", ")}.`, false);
+    return true;
+  }
+
+  if (commandLooksLikeScoreEntry(command)) {
+    setVoiceStatus("Listening for score entry...");
+    return true;
+  }
+
+  if (handleYardageVoiceCommand(command)) {
+    return true;
+  }
+
+  if (handleHazardVoiceCommand(command)) {
+    return true;
+  }
+
+  const questionAnswer = answerVoiceQuestion(command);
+
+  if (questionAnswer) {
+    showFastCaddieMessage(questionAnswer, true);
+    return true;
+  }
+
+  return false;
+}
+
+function showFastCaddieMessage(text, shouldSpeak) {
+  message.textContent = text;
+  setVoiceStatus(text);
+
+  if (shouldSpeak) {
+    speakText(text);
+  }
+}
+
+function tryHandleRoundLifecycleVoiceCommand(command, transcript) {
+  if (isEndRoundCommand(command)) {
+    endRoundFromVoice();
+    return true;
+  }
+
+  if (isStartRoundCommand(command)) {
+    startRoundFromVoice(transcript);
+    return true;
+  }
+
+  return false;
+}
+
+function isStartRoundCommand(command) {
+  return (
+    /\b(start|begin|play|create|open)\b/.test(command) &&
+    /\b(round|golf|course)\b/.test(command)
+  ) ||
+    /\b(play|open)\b.+\bwith\b/.test(command) ||
+    /\b(start|begin)\b\s+(?:at|on|for)\b/.test(command);
+}
+
+function isEndRoundCommand(command) {
+  return /\b(end|finish|complete|close)\b/.test(command) &&
+    /\b(round|golf)\b/.test(command);
+}
+
+function startRoundFromVoice(transcript) {
+  if (round.players.length > 0) {
+    showFastCaddieMessage("You already have an active round. Say end round when you are finished, or use Reset Round to clear it.", true);
+    return;
+  }
+
+  const parsedRound = parseVoiceRoundStart(transcript);
+
+  if (!parsedRound.courseName) {
+    showFastCaddieMessage("What course should I start? Try saying: start a round at Prairie Pines with Alex and Sam.", true);
+    showAppScreen("startSetup");
+    return;
+  }
+
+  const savedCourse = findSavedCourseSetupByName(parsedRound.courseName);
+  const courseName = savedCourse ? savedCourse.courseName : parsedRound.courseName;
+  const playerNames = parsedRound.players.length > 0
+    ? parsedRound.players
+    : getPlayersFromSetupForm();
+  const players = playerNames.length > 0 ? playerNames : ["Golfer"];
+  const totalHoles = parsedRound.totalHoles || (savedCourse ? savedCourse.totalHoles : Number(totalHolesSelect.value || 18));
+
+  selectedCourseSetup = savedCourse || null;
+  courseNameInput.value = courseName;
+  playerNamesInput.value = players.join(", ");
+  totalHolesSelect.value = String(totalHoles === 9 ? 9 : 18);
+
+  startRound();
+
+  const setupText = savedCourse ? " using the saved course setup" : "";
+  showFastCaddieMessage(`Starting ${totalHolesSelect.value} holes at ${round.courseName}${setupText}. You are on Hole 1.`, true);
+}
+
+function endRoundFromVoice() {
+  if (round.players.length === 0) {
+    showFastCaddieMessage("There is no active round to end yet. Say start a round at the course name when you are ready.", true);
+    return;
+  }
+
+  saveScores();
+  renderScorecard();
+  saveRoundToStorage();
+  showAppScreen("scorecard");
+  showFastCaddieMessage(buildFinalRoundMessage(), true);
+}
+
+function parseVoiceRoundStart(transcript) {
+  const rawTranscript = String(transcript || "").trim();
+  const totalHoles = parseSpokenHoleCount(rawTranscript);
+  const players = parseSpokenPlayers(rawTranscript);
+  const courseName = parseSpokenCourseName(rawTranscript);
+
+  return {
+    courseName: courseName,
+    players: players,
+    totalHoles: totalHoles
+  };
+}
+
+function parseSpokenCourseName(transcript) {
+  const match = transcript.match(/\b(?:start|begin|play|create|open)\s+(?:a\s+)?(?:new\s+)?(?:round|golf|course)?\s*(?:at|on|for)\s+(.+)$/i);
+
+  if (match) {
+    return cleanSpokenCourseName(match[1]);
+  }
+
+  const playMatch = transcript.match(/\b(?:play|open)\s+(.+)$/i);
+
+  if (playMatch) {
+    return cleanSpokenCourseName(playMatch[1]);
+  }
+
+  return "";
+}
+
+function cleanSpokenCourseName(value) {
+  return String(value || "")
+    .replace(/\bwith\b.+$/i, "")
+    .replace(/\b(?:for|playing)\s+(?:nine|9|eighteen|18)\s+(?:holes?)?\b.*$/i, "")
+    .replace(/\b(?:nine|9|eighteen|18)\s+holes?\b.*$/i, "")
+    .replace(/[.?!]+$/g, "")
+    .trim();
+}
+
+function parseSpokenPlayers(transcript) {
+  const match = String(transcript || "").match(/\bwith\s+(.+)$/i);
+
+  if (!match) {
+    return [];
+  }
+
+  return match[1]
+    .replace(/\b(?:for|playing)\s+(?:nine|9|eighteen|18)\s+(?:holes?)?\b.*$/i, "")
+    .replace(/[.?!]+$/g, "")
+    .split(/\s*(?:,| and | & )\s*/i)
+    .map(name => normalizeSpokenPlayerName(name))
+    .filter(name => name !== "");
+}
+
+function normalizeSpokenPlayerName(name) {
+  const trimmed = String(name || "").trim();
+
+  if (/^(i|me|myself)$/i.test(trimmed)) {
+    return "Golfer";
+  }
+
+  return trimmed.replace(/\b(player|golfer)\b/gi, "").trim();
+}
+
+function parseSpokenHoleCount(transcript) {
+  const normalized = String(transcript || "").toLowerCase();
+
+  if (/\b(9|nine)\s*(holes?)?\b/.test(normalized)) {
+    return 9;
+  }
+
+  if (/\b(18|eighteen)\s*(holes?)?\b/.test(normalized)) {
+    return 18;
+  }
+
+  return 0;
+}
+
+function getPlayersFromSetupForm() {
+  return playerNamesInput.value
+    .split(",")
+    .map(name => name.trim())
+    .filter(name => name !== "");
+}
+
+function findSavedCourseSetupByName(courseName) {
+  const normalizedName = normalizeCourseNameForMatch(courseName);
+
+  if (!normalizedName) {
+    return null;
+  }
+
+  return getSavedCourseSetups().find(course => {
+    const savedName = normalizeCourseNameForMatch(course.courseName);
+    return savedName === normalizedName ||
+      savedName.includes(normalizedName) ||
+      normalizedName.includes(savedName);
+  }) || null;
+}
+
+function normalizeCourseNameForMatch(courseName) {
+  return String(courseName || "")
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/\bgolf\b/g, "")
+    .replace(/\bcountry\b/g, "")
+    .replace(/\bclub\b/g, "")
+    .replace(/\bcourse\b/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function buildFinalRoundMessage() {
+  const totals = round.players
+    .map(player => ({
+      name: player,
+      total: getPlayerTotal(player)
+    }))
+    .sort((a, b) => a.total - b.total);
+
+  if (totals.length === 0 || totals[0].total === 0) {
+    return `Round ended at ${round.courseName}. No scores were entered.`;
+  }
+
+  const summary = totals.map(player => {
+    return `${player.name} ${player.total}`;
+  }).join(", ");
+
+  return `Round ended at ${round.courseName}. Final scores: ${summary}.`;
 }
 
 async function askVoiceAgent(transcript) {
@@ -1022,6 +1359,8 @@ function buildRoundContextForAgent() {
 
 function isValidVoiceAgentResult(result) {
   const allowedActions = [
+    "start_round",
+    "end_round",
     "save_scores",
     "change_score",
     "set_par",
@@ -1062,7 +1401,7 @@ function handleLegacyVoiceCommand(transcript) {
     const confirmation = `Updated ${correction.player}'s score on Hole ${correction.hole} to ${correction.score}.`;
 
     message.textContent = confirmation;
-    voiceStatus.textContent = confirmation;
+    setVoiceStatus(confirmation);
 
     // No speaking for corrections.
     return;
@@ -1073,7 +1412,7 @@ function handleLegacyVoiceCommand(transcript) {
 
   if (navigationMessage) {
     message.textContent = navigationMessage;
-    voiceStatus.textContent = navigationMessage;
+    setVoiceStatus(navigationMessage);
 
     // No speaking for navigation.
     return;
@@ -1098,7 +1437,7 @@ function handleLegacyVoiceCommand(transcript) {
     const confirmation = `Saved for Hole ${round.currentHole}: ${confirmationParts.join(", ")}.`;
 
     message.textContent = confirmation;
-    voiceStatus.textContent = confirmation;
+    setVoiceStatus(confirmation);
 
     // No speaking for score entry.
     return;
@@ -1106,7 +1445,7 @@ function handleLegacyVoiceCommand(transcript) {
 
   // 4. If it sounds like incomplete score entry, do not answer out loud.
 if (commandLooksLikeScoreEntry(command)) {
-  voiceStatus.textContent = "Listening for score entry...";
+  setVoiceStatus("Listening for score entry...");
   return;
 }
 
@@ -1128,7 +1467,7 @@ const questionAnswer = answerVoiceQuestion(command);
 
 if (questionAnswer) {
   message.textContent = questionAnswer;
-  voiceStatus.textContent = questionAnswer;
+  setVoiceStatus(questionAnswer);
   speakText(questionAnswer);
   return;
 }
@@ -1147,6 +1486,14 @@ function executeVoiceAgentAction(result) {
 
   if (result.confidence < AI_VOICE_CONFIDENCE_THRESHOLD) {
     return false;
+  }
+
+  if (result.action === "start_round") {
+    return executeAgentStartRound(result);
+  }
+
+  if (result.action === "end_round") {
+    return executeAgentEndRound(result);
   }
 
   if (result.action === "save_scores") {
@@ -1182,6 +1529,48 @@ function executeVoiceAgentAction(result) {
   }
 
   return false;
+}
+
+function executeAgentStartRound(result) {
+  if (round.players.length > 0) {
+    showVoiceAgentMessage("You already have an active round. Say end round when you are finished, or use Reset Round to clear it.", true);
+    return true;
+  }
+
+  const courseName = String(result.payload.courseName || "").trim();
+  const players = Array.isArray(result.payload.players)
+    ? result.payload.players.map(player => String(player).trim()).filter(player => player !== "")
+    : [];
+  const totalHoles = Number(result.payload.totalHoles || 18);
+
+  if (!courseName || players.length === 0 || ![9, 18].includes(totalHoles)) {
+    return false;
+  }
+
+  const savedCourse = findSavedCourseSetupByName(courseName);
+
+  selectedCourseSetup = savedCourse || null;
+  courseNameInput.value = savedCourse ? savedCourse.courseName : courseName;
+  playerNamesInput.value = players.join(", ");
+  totalHolesSelect.value = String(savedCourse ? savedCourse.totalHoles : totalHoles);
+
+  startRound();
+  showVoiceAgentMessage(result.message || `Starting a round at ${round.courseName}. You are on Hole 1.`, result.speak);
+  return true;
+}
+
+function executeAgentEndRound(result) {
+  if (round.players.length === 0) {
+    showVoiceAgentMessage("There is no active round to end yet.", true);
+    return true;
+  }
+
+  saveScores();
+  renderScorecard();
+  saveRoundToStorage();
+  showAppScreen("scorecard");
+  showVoiceAgentMessage(result.message || buildFinalRoundMessage(), result.speak);
+  return true;
 }
 
 function executeAgentSaveScores(result) {
@@ -1309,7 +1698,7 @@ function handleAgentHazardDistance(result) {
 
 function showVoiceAgentMessage(text, shouldSpeak) {
   message.textContent = text;
-  voiceStatus.textContent = text;
+  setVoiceStatus(text);
 
   if (shouldSpeak) {
     speakText(text);
@@ -1391,7 +1780,7 @@ function parseScoreCommand(command) {
 }
 
 function findScoreForName(command, name) {
-  const numberPattern = "(\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)";
+  const numberPattern = "(\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|double\\s+bogey|triple\\s+bogey|quadruple\\s+bogey|birdie|bogey|eagle|albatross|par)";
 
   const escapedName = escapeRegExp(name);
 
@@ -1412,6 +1801,23 @@ function findScoreForName(command, name) {
 }
 
 function convertScoreToNumber(scoreText) {
+  const normalizedScoreText = String(scoreText).toLowerCase().trim().replace(/\s+/g, " ");
+  const currentPar = getHolePar(round.currentHole);
+  const relativeScores = {
+    albatross: currentPar - 3,
+    eagle: currentPar - 2,
+    birdie: currentPar - 1,
+    par: currentPar,
+    bogey: currentPar + 1,
+    "double bogey": currentPar + 2,
+    "triple bogey": currentPar + 3,
+    "quadruple bogey": currentPar + 4
+  };
+
+  if (relativeScores[normalizedScoreText]) {
+    return relativeScores[normalizedScoreText];
+  }
+
   const numberWords = {
     one: 1,
     two: 2,
@@ -1435,11 +1841,11 @@ function convertScoreToNumber(scoreText) {
     twenty: 20
   };
 
-  if (numberWords[scoreText]) {
-    return numberWords[scoreText];
+  if (numberWords[normalizedScoreText]) {
+    return numberWords[normalizedScoreText];
   }
 
-  return Number(scoreText);
+  return Number(normalizedScoreText);
 }
 
 function escapeRegExp(text) {
@@ -1839,10 +2245,37 @@ function commandLooksLikeScoreEntry(command) {
     "shot"
   ];
 
-  return scoreEntryWords.some(word => {
+  const hasScoreEntryVerb = scoreEntryWords.some(word => {
     const pattern = new RegExp(`\\b${word}\\b`, "i");
     return pattern.test(command);
   });
+
+  if (!hasScoreEntryVerb) {
+    return false;
+  }
+
+  return commandHasPlayerReference(command) && commandHasScoreValuePhrase(command);
+}
+
+function commandHasPlayerReference(command) {
+  return round.players.some((player, index) => {
+    const playerName = player.toLowerCase();
+    const playerPattern = new RegExp(`\\b${escapeRegExp(playerName)}\\b`, "i");
+
+    if (playerPattern.test(command)) {
+      return true;
+    }
+
+    return index === 0 && (
+      /\bi\b/.test(command) ||
+      /\bme\b/.test(command) ||
+      /\bmy\b/.test(command)
+    );
+  });
+}
+
+function commandHasScoreValuePhrase(command) {
+  return /(\b\d+\b|\bone\b|\btwo\b|\bthree\b|\bfour\b|\bfive\b|\bsix\b|\bseven\b|\beight\b|\bnine\b|\bten\b|\bpar\b|\bbirdie\b|\bbogey\b|\beagle\b|\balbatross\b)/i.test(command);
 }
 
 // -------------------------------
@@ -2033,7 +2466,7 @@ function getYardageToGreen(shouldSpeak = false) {
   if (!target || target.center.lat === null || target.center.lng === null) {
     const noTargetMessage = `Please save at least a center green target for Hole ${round.currentHole} first.`;
     yardageResult.textContent = noTargetMessage;
-    voiceStatus.textContent = noTargetMessage;
+    setVoiceStatus(noTargetMessage);
 
     if (shouldSpeak) {
       speakText(noTargetMessage);
@@ -2045,7 +2478,7 @@ function getYardageToGreen(shouldSpeak = false) {
   if (!navigator.geolocation) {
     const noGpsMessage = "GPS is not supported in this browser.";
     yardageResult.textContent = noGpsMessage;
-    voiceStatus.textContent = noGpsMessage;
+    setVoiceStatus(noGpsMessage);
 
     if (shouldSpeak) {
       speakText(noGpsMessage);
@@ -2069,7 +2502,7 @@ function getYardageToGreen(shouldSpeak = false) {
 
       yardageResult.textContent = resultMessage;
       message.textContent = resultMessage;
-      voiceStatus.textContent = resultMessage;
+      setVoiceStatus(resultMessage);
 
       if (shouldSpeak) {
         speakText(spokenMessage);
@@ -2080,7 +2513,7 @@ function getYardageToGreen(shouldSpeak = false) {
 
       yardageResult.textContent = errorMessage;
       message.textContent = errorMessage;
-      voiceStatus.textContent = errorMessage;
+      setVoiceStatus(errorMessage);
 
       if (shouldSpeak) {
         speakText(errorMessage);
@@ -2210,7 +2643,7 @@ function handleYardageVoiceCommand(command) {
     return false;
   }
 
-  voiceStatus.textContent = "Getting yardage...";
+  setVoiceStatus("Getting yardage...");
   getYardageToGreen(true);
 
   return true;
@@ -2454,19 +2887,19 @@ function handleHazardVoiceCommand(command) {
 
   if (hazards.length === 0) {
     const noHazardsMessage = `No hazards or layup targets are saved for Hole ${round.currentHole}.`;
-    voiceStatus.textContent = noHazardsMessage;
+    setVoiceStatus(noHazardsMessage);
     speakText(noHazardsMessage);
     return true;
   }
 
   if (!navigator.geolocation) {
     const noGpsMessage = "GPS is not supported in this browser.";
-    voiceStatus.textContent = noGpsMessage;
+    setVoiceStatus(noGpsMessage);
     speakText(noGpsMessage);
     return true;
   }
 
-  voiceStatus.textContent = "Getting hazard distance...";
+  setVoiceStatus("Getting hazard distance...");
 
   navigator.geolocation.getCurrentPosition(
     function (position) {
@@ -2489,7 +2922,7 @@ function handleHazardVoiceCommand(command) {
       if (requestedHazard) {
         const response = `${requestedHazard.name} is ${requestedHazard.yards} yards away.`;
         message.textContent = response;
-        voiceStatus.textContent = response;
+        setVoiceStatus(response);
         speakText(response);
         return;
       }
@@ -2497,12 +2930,12 @@ function handleHazardVoiceCommand(command) {
       const response = buildAllHazardsMessage(hazardsWithDistance);
 
       message.textContent = response;
-      voiceStatus.textContent = response;
+      setVoiceStatus(response);
       speakText(response);
     },
     function (error) {
       const errorMessage = getLocationErrorMessage(error);
-      voiceStatus.textContent = errorMessage;
+      setVoiceStatus(errorMessage);
       speakText(errorMessage);
     },
     {
@@ -2686,7 +3119,7 @@ function saveCurrentCourseSetup() {
   selectedCourseSetup = courseSetup;
 
   message.textContent = `${round.courseName} course setup saved.`;
-  voiceStatus.textContent = `${round.courseName} course setup saved.`;
+  setVoiceStatus(`${round.courseName} course setup saved.`);
 }
 
 function deepCopy(value) {
