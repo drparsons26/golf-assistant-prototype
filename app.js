@@ -3315,10 +3315,10 @@ async function loadGolfApiClubAsCourseSetup(club) {
 async function buildCourseSetupFromGolfApiClub(club) {
   const clubId = club.clubID || club.clubId || club.id || String(Date.now());
   const totalHoles = Number(club.numHoles || club.numholes || club.holes || 18) === 9 ? 9 : 18;
-  const details = await fetchGolfApiCourseDetails(clubId);
+  const details = await fetchGolfApiCourseDetails(club);
   const course = details.course || {};
   const tee = details.tee || {};
-  const enrichedTotalHoles = Number(course.NumHoles || course.numHoles || totalHoles) === 9 ? 9 : 18;
+  const enrichedTotalHoles = Number(course.numHoles || course.NumHoles || totalHoles) === 9 ? 9 : 18;
 
   return {
     id: `golfapi-${clubId}`,
@@ -3331,8 +3331,8 @@ async function buildCourseSetupFromGolfApiClub(club) {
     source: "golfapi",
     golfApi: {
       clubID: clubId,
-      courseID: course.CourseID || course.courseID || course.courseId || null,
-      teeID: tee.TeeID || tee.teeID || tee.teeId || null,
+      courseID: course.courseID || course.CourseID || course.courseId || null,
+      teeID: tee.teeID || tee.TeeID || tee.teeId || null,
       latitude: club.latitude || club.Latitude || null,
       longitude: club.longitude || club.Longitude || null,
       rawClub: club,
@@ -3343,55 +3343,36 @@ async function buildCourseSetupFromGolfApiClub(club) {
   };
 }
 
-async function fetchGolfApiCourseDetails(clubId) {
+async function fetchGolfApiCourseDetails(club) {
   try {
-    const courses = await fetchGolfApiCollectionWithFallbacks("courses", [
-      { clubID: clubId },
-      { ClubID: clubId }
-    ]);
-    const course = chooseGolfApiCourse(courses);
-    const courseId = course.CourseID || course.courseID || course.courseId;
+    const courseRef = chooseGolfApiCourse(club.courses || []);
+    let courseId = courseRef.courseID || courseRef.CourseID || courseRef.courseId;
 
     if (!courseId) {
-      return { course: course, tee: {} };
+      const clubId = club.clubID || club.clubId || club.id;
+      const clubDetails = clubId ? await fetchGolfApiJson(`clubs/${clubId}`) : {};
+      const detailedCourseRef = chooseGolfApiCourse(clubDetails.courses || []);
+      courseId = detailedCourseRef.courseID || detailedCourseRef.CourseID || detailedCourseRef.courseId;
     }
 
-    const tees = await fetchGolfApiCollectionWithFallbacks("tees", [
-      { courseID: courseId },
-      { CourseID: courseId }
-    ]);
+    if (!courseId) {
+      return { course: courseRef, tee: {} };
+    }
+
+    const course = await fetchGolfApiJson(`courses/${courseId}`, { measureUnit: "yd" });
+    const tees = Array.isArray(course.tees) ? course.tees : [];
 
     return {
       course: course,
-      tee: chooseGolfApiTee(tees)
+      tee: {
+        ...chooseGolfApiTee(tees),
+        measureUnit: course.measure || course.measureUnit || "yd"
+      }
     };
   } catch (error) {
     console.warn("Could not load GOLFAPI course details.", error);
     return { course: {}, tee: {} };
   }
-}
-
-async function fetchGolfApiCollectionWithFallbacks(resource, paramOptions) {
-  let lastError = null;
-
-  for (const params of paramOptions) {
-    try {
-      const data = await fetchGolfApiJson(resource, params);
-      const collection = normalizeGolfApiCollection(data, resource);
-
-      if (collection.length > 0) {
-        return collection;
-      }
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  if (lastError) {
-    throw lastError;
-  }
-
-  return [];
 }
 
 async function fetchGolfApiJson(resource, params) {
@@ -3435,7 +3416,7 @@ function chooseGolfApiCourse(courses) {
   }
 
   return courses.find(course => {
-    return Number(course.NumHoles || course.numHoles || 0) === 18;
+    return Number(course.numHoles || course.NumHoles || 0) === 18;
   }) || courses[0];
 }
 
@@ -3449,7 +3430,7 @@ function chooseGolfApiTee(tees) {
   });
 
   return playableTees.find(tee => {
-    return String(tee.TeeName || tee.teeName || "").toLowerCase().includes("white");
+    return String(tee.teeName || tee.TeeName || "").toLowerCase().includes("white");
   }) || playableTees[0] || tees[0];
 }
 
@@ -3465,7 +3446,7 @@ function getGolfApiTeeTotalLength(tee) {
 
 function getGolfApiCourseName(course, club) {
   const clubName = getGolfApiClubName(club);
-  const courseName = course.CourseName || course.courseName;
+  const courseName = course.courseName || course.CourseName;
 
   if (!courseName) {
     return clubName;
@@ -3481,8 +3462,10 @@ function getGolfApiCourseName(course, club) {
 function buildHoleParsFromGolfApiCourse(course, totalHoles) {
   const pars = createDefaultPars(totalHoles);
 
+  const parsMen = Array.isArray(course.parsMen) ? course.parsMen : [];
+
   for (let hole = 1; hole <= totalHoles; hole++) {
-    const par = Number(course[`Par${hole}`] || course[`par${hole}`] || 0);
+    const par = Number(parsMen[hole - 1] || course[`Par${hole}`] || course[`par${hole}`] || 0);
 
     if (par >= 3 && par <= 6) {
       pars[hole] = par;

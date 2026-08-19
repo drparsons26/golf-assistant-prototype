@@ -13,7 +13,7 @@ const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || "0.0.0.0";
 const model = process.env.OPENAI_MODEL || "gpt-5-mini";
 const golfApiBaseUrl = process.env.GOLFAPI_BASE_URL || "https://golfapi.io/api/v2.3";
-const allowedGolfApiResources = new Set(["clubs", "courses", "tees", "coordinates"]);
+const allowedGolfApiResources = new Set(["clubs", "courses", "coordinates"]);
 
 const mimeTypes = {
   ".css": "text/css",
@@ -161,14 +161,26 @@ async function handleGolfApiRequest(url, res) {
     return;
   }
 
-  const resource = url.pathname.replace("/api/golfapi/", "").replace(/^\/+|\/+$/g, "");
+  const pathParts = url.pathname
+    .replace("/api/golfapi/", "")
+    .split("/")
+    .map(part => part.trim())
+    .filter(Boolean);
+  const resource = pathParts[0] || "";
+  const resourceId = pathParts[1] || "";
 
-  if (!allowedGolfApiResources.has(resource)) {
+  if (!allowedGolfApiResources.has(resource) || pathParts.length > 2) {
     sendJson(res, 404, { error: "Unknown GOLFAPI resource." });
     return;
   }
 
-  const upstreamUrl = new URL(`${golfApiBaseUrl.replace(/\/+$/g, "")}/${resource}`);
+  if (resourceId && !/^[A-Za-z0-9_-]+$/.test(resourceId)) {
+    sendJson(res, 400, { error: "Invalid GOLFAPI resource ID." });
+    return;
+  }
+
+  const upstreamPath = resourceId ? `${resource}/${resourceId}` : resource;
+  const upstreamUrl = new URL(`${golfApiBaseUrl.replace(/\/+$/g, "")}/${upstreamPath}`);
 
   url.searchParams.forEach((value, key) => {
     if (value !== "") {
