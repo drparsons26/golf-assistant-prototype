@@ -3311,8 +3311,12 @@ async function loadGolfApiClubAsCourseSetup(club) {
   const yardageText = Object.keys(courseSetup.holeLengths || {}).length > 0
     ? " Pars and hole lengths were loaded."
     : " Hole lengths were not available yet.";
+  const targetCount = Object.keys(courseSetup.holeTargets || {}).length;
+  const targetText = targetCount > 0
+    ? ` Green GPS targets were loaded for ${targetCount} hole${targetCount === 1 ? "" : "s"}.`
+    : " Green GPS targets were not available yet.";
 
-  setGolfApiSearchStatus(`${courseSetup.courseName} loaded.${yardageText} Add players, then start the round.`);
+  setGolfApiSearchStatus(`${courseSetup.courseName} loaded.${yardageText}${targetText} Add players, then start the round.`);
 }
 
 async function buildCourseSetupFromGolfApiClub(club) {
@@ -3321,14 +3325,15 @@ async function buildCourseSetupFromGolfApiClub(club) {
   const details = await fetchGolfApiCourseDetails(club);
   const course = details.course || {};
   const tee = details.tee || {};
+  const coordinates = details.coordinates || [];
   const enrichedTotalHoles = Number(course.numHoles || course.NumHoles || totalHoles) === 9 ? 9 : 18;
 
   return {
     id: `golfapi-${clubId}`,
     courseName: getGolfApiCourseName(course, club),
     totalHoles: enrichedTotalHoles,
-    holeTargets: {},
-    holeHazards: {},
+    holeTargets: buildHoleTargetsFromGolfApiCoordinates(coordinates, enrichedTotalHoles),
+    holeHazards: buildHoleHazardsFromGolfApiCoordinates(coordinates, enrichedTotalHoles),
     holePars: buildHoleParsFromGolfApiCourse(course, enrichedTotalHoles),
     holeLengths: buildHoleLengthsFromGolfApiTee(tee, enrichedTotalHoles),
     source: "golfapi",
@@ -3340,7 +3345,8 @@ async function buildCourseSetupFromGolfApiClub(club) {
       longitude: club.longitude || club.Longitude || null,
       rawClub: club,
       rawCourse: course,
-      rawTee: tee
+      rawTee: tee,
+      coordinateCount: coordinates.length
     },
     savedAt: new Date().toISOString()
   };
@@ -3364,17 +3370,25 @@ async function fetchGolfApiCourseDetails(club) {
 
     const course = await fetchGolfApiJson(`courses/${courseId}`, { measureUnit: "yd" });
     const tees = Array.isArray(course.tees) ? course.tees : [];
+    const coordinatesResponse = await fetchGolfApiJson(`coordinates/${courseId}`).catch(error => {
+      console.warn("Could not load GOLFAPI coordinates.", error);
+      return {};
+    });
+    const coordinates = Array.isArray(coordinatesResponse.coordinates)
+      ? coordinatesResponse.coordinates
+      : [];
 
     return {
       course: course,
       tee: {
         ...chooseGolfApiTee(tees),
         measureUnit: course.measure || course.measureUnit || "yd"
-      }
+      },
+      coordinates: coordinates
     };
   } catch (error) {
     console.warn("Could not load GOLFAPI course details.", error);
-    return { course: {}, tee: {} };
+    return { course: {}, tee: {}, coordinates: [] };
   }
 }
 
@@ -3493,6 +3507,184 @@ function buildHoleLengthsFromGolfApiTee(tee, totalHoles) {
   }
 
   return lengths;
+}
+
+function buildHoleTargetsFromGolfApiCoordinates(coordinates, totalHoles) {
+  const targets = {};
+
+  if (!Array.isArray(coordinates)) {
+    return targets;
+  }
+
+  coordinates.forEach(point => {
+    const hole = Number(point.hole ?? point.Hole);
+    const poi = Number(point.poi ?? point.POI);
+
+    if (poi !== 1 || !Number.isInteger(hole) || hole < 1 || hole > totalHoles) {
+      return;
+    }
+
+    const location = Number(point.location ?? point.Location);
+    const normalizedPoint = normalizeGolfApiCoordinatePoint(point);
+
+    if (!normalizedPoint) {
+      return;
+    }
+
+    if (!targets[hole]) {
+      targets[hole] = createEmptyGreenTarget();
+    }
+
+    if (location === 1) {
+      targets[hole].front = normalizedPoint;
+    } else if (location === 2) {
+      targets[hole].center = normalizedPoint;
+    } else if (location === 3) {
+      targets[hole].back = normalizedPoint;
+    }
+  });
+
+  Object.keys(targets).forEach(hole => {
+    if (!targets[hole].center || targets[hole].center.lat === null || targets[hole].center.lng === null) {
+      delete targets[hole];
+    }
+  });
+
+  return targets;
+}
+
+function buildHoleHazardsFromGolfApiCoordinates(coordinates, totalHoles) {
+  const hazards = {};
+
+  if (!Array.isArray(coordinates)) {
+    return hazards;
+  }
+
+  coordinates.forEach((point, index) => {
+    const hole = Number(point.hole ?? point.Hole);
+    const poi = Number(point.poi ?? point.POI);
+
+    if (poi === 1 || !Number.isInteger(hole) || hole < 1 || hole > totalHoles) {
+      return;
+    }
+
+    const normalizedPoint = normalizeGolfApiCoordinatePoint(point);
+    const hazardMeta = getGolfApiHazardMeta(point);
+
+    if (!normalizedPoint || !hazardMeta) {
+      return;
+    }
+
+    if (!hazards[hole]) {
+      hazards[hole] = [];
+    }
+
+    hazards[hole].push({
+      name: `${hazardMeta.label}${buildGolfApiSideLabel(point)}`,
+      type: hazardMeta.type,
+      lat: normalizedPoint.lat,
+      lng: normalizedPoint.lng,
+      source: "golfapi",
+      golfApiId: `golfapi-${hole}-${poi}-${Number(point.location ?? point.Location ?? 0)}-${index}`
+    });
+  });
+
+  return hazards;
+}
+
+function createEmptyGreenTarget() {
+  return {
+    front: {
+      lat: null,
+      lng: null
+    },
+    center: {
+      lat: null,
+      lng: null
+    },
+    back: {
+      lat: null,
+      lng: null
+    }
+  };
+}
+
+function normalizeGolfApiCoordinatePoint(point) {
+  const lat = Number(point.latitude ?? point.Latitude);
+  const lng = Number(point.longitude ?? point.Longitude);
+
+  if (!isValidCoordinatePair(lat, lng)) {
+    return null;
+  }
+
+  return {
+    lat: lat,
+    lng: lng
+  };
+}
+
+function getGolfApiHazardMeta(point) {
+  const poi = Number(point.poi ?? point.POI);
+
+  const knownPoints = {
+    2: {
+      label: "Green bunker",
+      type: "bunker"
+    },
+    3: {
+      label: "Fairway bunker",
+      type: "bunker"
+    },
+    4: {
+      label: "Water",
+      type: "water"
+    },
+    5: {
+      label: "Trees",
+      type: "trees"
+    },
+    6: {
+      label: "Marker",
+      type: "layup"
+    },
+    7: {
+      label: "Marker",
+      type: "layup"
+    },
+    8: {
+      label: "Marker",
+      type: "layup"
+    },
+    9: {
+      label: "Dogleg",
+      type: "dogleg"
+    },
+    10: {
+      label: "Road",
+      type: "other"
+    },
+    11: {
+      label: "Tee front",
+      type: "layup"
+    },
+    12: {
+      label: "Tee back",
+      type: "layup"
+    }
+  };
+
+  return knownPoints[poi] || null;
+}
+
+function buildGolfApiSideLabel(point) {
+  const side = Number(point.sideFW ?? point.SideFW ?? point.sideOfFairway ?? point.SideOfFairway);
+  const labels = {
+    1: " left",
+    2: " center",
+    3: " right"
+  };
+
+  return labels[side] || "";
 }
 
 function getGolfApiClubName(club) {
