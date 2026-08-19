@@ -6,7 +6,8 @@ let round = {
   scores: {},
   holeTargets: {},
   holeHazards: {},
-  holePars: {}
+  holePars: {},
+  holeLengths: {}
 };
 
 const setupSection = document.getElementById("setupSection");
@@ -24,6 +25,7 @@ const resetRoundBtn = document.getElementById("resetRoundBtn");
 const saveScoresBtn = document.getElementById("saveScoresBtn");
 const nextHoleBtn = document.getElementById("nextHoleBtn");
 const previousHoleBtn = document.getElementById("previousHoleBtn");
+const endRoundBtn = document.getElementById("endRoundBtn");
 
 const courseTitle = document.getElementById("courseTitle");
 const holeTitle = document.getElementById("holeTitle");
@@ -81,6 +83,7 @@ const enableAudioBtn = document.getElementById("enableAudioBtn");
 const audioStatus = document.getElementById("audioStatus");
 const settingsSection = document.getElementById("settingsSection");
 const roundParSummary = document.getElementById("roundParSummary");
+const roundLengthSummary = document.getElementById("roundLengthSummary");
 const navButtons = document.querySelectorAll("[data-nav-target]");
 
 let recognition = null;
@@ -108,6 +111,9 @@ resetRoundBtn.addEventListener("click", resetRound);
 saveScoresBtn.addEventListener("click", saveScores);
 nextHoleBtn.addEventListener("click", nextHole);
 previousHoleBtn.addEventListener("click", previousHole);
+if (endRoundBtn) {
+  endRoundBtn.addEventListener("click", endRoundManually);
+}
 saveTargetBtn.addEventListener("click", saveTargetGreen);
 getYardageBtn.addEventListener("click", function () {
   getYardageToGreen(false);
@@ -171,10 +177,12 @@ if (selectedCourseSetup) {
   round.holeTargets = deepCopy(selectedCourseSetup.holeTargets || {});
   round.holeHazards = deepCopy(selectedCourseSetup.holeHazards || {});
   round.holePars = deepCopy(selectedCourseSetup.holePars || createDefaultPars(round.totalHoles));
+  round.holeLengths = deepCopy(selectedCourseSetup.holeLengths || {});
 } else {
   round.holeTargets = {};
   round.holeHazards = {};
   round.holePars = createDefaultPars(round.totalHoles);
+  round.holeLengths = {};
 }
 
   players.forEach(player => {
@@ -294,6 +302,9 @@ function renderCurrentHole() {
   if (roundParSummary) {
     roundParSummary.textContent = getHolePar(round.currentHole);
   }
+  if (roundLengthSummary) {
+    roundLengthSummary.textContent = formatHoleLength(round.currentHole);
+  }
   scoreInputs.innerHTML = "";
 
   round.players.forEach((player, index) => {
@@ -370,6 +381,14 @@ function previousHole() {
   } else {
     message.textContent = "You are already on Hole 1.";
   }
+}
+
+function endRoundManually() {
+  if (round.players.length === 0) {
+    return;
+  }
+
+  endRoundFromVoice();
 }
 
 function renderScorecard() {
@@ -487,6 +506,10 @@ function loadSavedRound() {
 
 fillMissingPars();
 
+if (!round.holeLengths) {
+  round.holeLengths = {};
+}
+
   if (!round.holeTargets) {
   round.holeTargets = {};
 }
@@ -541,7 +564,8 @@ function resetRound() {
   scores: {},
   holeTargets: {},
   holeHazards: {},
-  holePars: {}
+  holePars: {},
+  holeLengths: {}
 };
 
   showAppScreen("home");
@@ -1361,7 +1385,8 @@ function buildRoundContextForAgent() {
     scores: round.scores,
     holeTargets: round.holeTargets || {},
     holeHazards: round.holeHazards || {},
-    holePars: round.holePars || {}
+    holePars: round.holePars || {},
+    holeLengths: round.holeLengths || {}
   };
 }
 
@@ -1895,6 +1920,17 @@ function speakText(text) {
 // -------------------------------
 
 function answerVoiceQuestion(command) {
+  if (isHoleLengthQuestion(command)) {
+    const mentionedHole = extractHoleNumber(command) || round.currentHole;
+    const length = getHoleLength(mentionedHole);
+
+    if (length) {
+      return `Hole ${mentionedHole} is ${length} yards.`;
+    }
+
+    return `Hole ${mentionedHole} yardage is not loaded yet.`;
+  }
+
   // Current hole questions
   if (isCurrentHoleQuestion(command)) {
     return `You are currently on Hole ${round.currentHole}.`;
@@ -1946,6 +1982,17 @@ function answerVoiceQuestion(command) {
   }
 
   return null;
+}
+
+function isHoleLengthQuestion(command) {
+  return (
+    command.includes("how long") ||
+    command.includes("hole length") ||
+    command.includes("scorecard yardage") ||
+    command.includes("tee yardage") ||
+    command.includes("how many yards is this hole") ||
+    command.includes("how many yards is hole")
+  );
 }
 
 function isToParQuestion(command) {
@@ -3159,8 +3206,12 @@ function renderGolfApiSearchResults(clubs) {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "Load";
-    button.addEventListener("click", function () {
-      loadGolfApiClubAsCourseSetup(club);
+    button.addEventListener("click", async function () {
+      button.disabled = true;
+      button.textContent = "Loading...";
+      await loadGolfApiClubAsCourseSetup(club);
+      button.disabled = false;
+      button.textContent = "Load";
     });
 
     item.appendChild(details);
@@ -3169,8 +3220,10 @@ function renderGolfApiSearchResults(clubs) {
   });
 }
 
-function loadGolfApiClubAsCourseSetup(club) {
-  const courseSetup = buildCourseSetupFromGolfApiClub(club);
+async function loadGolfApiClubAsCourseSetup(club) {
+  setGolfApiSearchStatus(`Loading ${getGolfApiClubName(club)} details...`);
+
+  const courseSetup = await buildCourseSetupFromGolfApiClub(club);
   const savedCourses = getSavedCourseSetups();
   const existingIndex = savedCourses.findIndex(savedCourse => {
     return savedCourse.id === courseSetup.id ||
@@ -3195,29 +3248,208 @@ function loadGolfApiClubAsCourseSetup(club) {
     savedCourseSelect.value = courseSetup.id;
   }
 
-  setGolfApiSearchStatus(`${courseSetup.courseName} loaded. Add players, then start the round.`);
+  const yardageText = Object.keys(courseSetup.holeLengths || {}).length > 0
+    ? " Pars and hole lengths were loaded."
+    : " Hole lengths were not available yet.";
+
+  setGolfApiSearchStatus(`${courseSetup.courseName} loaded.${yardageText} Add players, then start the round.`);
 }
 
-function buildCourseSetupFromGolfApiClub(club) {
+async function buildCourseSetupFromGolfApiClub(club) {
   const clubId = club.clubID || club.clubId || club.id || String(Date.now());
   const totalHoles = Number(club.numHoles || club.numholes || club.holes || 18) === 9 ? 9 : 18;
+  const details = await fetchGolfApiCourseDetails(clubId);
+  const course = details.course || {};
+  const tee = details.tee || {};
+  const enrichedTotalHoles = Number(course.NumHoles || course.numHoles || totalHoles) === 9 ? 9 : 18;
 
   return {
     id: `golfapi-${clubId}`,
-    courseName: getGolfApiClubName(club),
-    totalHoles: totalHoles,
+    courseName: getGolfApiCourseName(course, club),
+    totalHoles: enrichedTotalHoles,
     holeTargets: {},
     holeHazards: {},
-    holePars: createDefaultPars(totalHoles),
+    holePars: buildHoleParsFromGolfApiCourse(course, enrichedTotalHoles),
+    holeLengths: buildHoleLengthsFromGolfApiTee(tee, enrichedTotalHoles),
     source: "golfapi",
     golfApi: {
       clubID: clubId,
+      courseID: course.CourseID || course.courseID || course.courseId || null,
+      teeID: tee.TeeID || tee.teeID || tee.teeId || null,
       latitude: club.latitude || club.Latitude || null,
       longitude: club.longitude || club.Longitude || null,
-      rawClub: club
+      rawClub: club,
+      rawCourse: course,
+      rawTee: tee
     },
     savedAt: new Date().toISOString()
   };
+}
+
+async function fetchGolfApiCourseDetails(clubId) {
+  try {
+    const courses = await fetchGolfApiCollectionWithFallbacks("courses", [
+      { clubID: clubId },
+      { ClubID: clubId }
+    ]);
+    const course = chooseGolfApiCourse(courses);
+    const courseId = course.CourseID || course.courseID || course.courseId;
+
+    if (!courseId) {
+      return { course: course, tee: {} };
+    }
+
+    const tees = await fetchGolfApiCollectionWithFallbacks("tees", [
+      { courseID: courseId },
+      { CourseID: courseId }
+    ]);
+
+    return {
+      course: course,
+      tee: chooseGolfApiTee(tees)
+    };
+  } catch (error) {
+    console.warn("Could not load GOLFAPI course details.", error);
+    return { course: {}, tee: {} };
+  }
+}
+
+async function fetchGolfApiCollectionWithFallbacks(resource, paramOptions) {
+  let lastError = null;
+
+  for (const params of paramOptions) {
+    try {
+      const data = await fetchGolfApiJson(resource, params);
+      const collection = normalizeGolfApiCollection(data, resource);
+
+      if (collection.length > 0) {
+        return collection;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  return [];
+}
+
+async function fetchGolfApiJson(resource, params) {
+  const searchParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      searchParams.set(key, value);
+    }
+  });
+
+  const response = await fetch(`/api/golfapi/${resource}?${searchParams.toString()}`);
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || `GOLFAPI ${resource} request failed.`);
+  }
+
+  return data;
+}
+
+function normalizeGolfApiCollection(data, collectionName) {
+  if (Array.isArray(data)) {
+    return data;
+  }
+
+  if (Array.isArray(data[collectionName])) {
+    return data[collectionName];
+  }
+
+  if (Array.isArray(data.data)) {
+    return data.data;
+  }
+
+  return [];
+}
+
+function chooseGolfApiCourse(courses) {
+  if (!Array.isArray(courses) || courses.length === 0) {
+    return {};
+  }
+
+  return courses.find(course => {
+    return Number(course.NumHoles || course.numHoles || 0) === 18;
+  }) || courses[0];
+}
+
+function chooseGolfApiTee(tees) {
+  if (!Array.isArray(tees) || tees.length === 0) {
+    return {};
+  }
+
+  const playableTees = tees.filter(tee => {
+    return getGolfApiTeeTotalLength(tee) > 0;
+  });
+
+  return playableTees.find(tee => {
+    return String(tee.TeeName || tee.teeName || "").toLowerCase().includes("white");
+  }) || playableTees[0] || tees[0];
+}
+
+function getGolfApiTeeTotalLength(tee) {
+  let total = 0;
+
+  for (let hole = 1; hole <= 18; hole++) {
+    total += Number(tee[`Length${hole}`] || tee[`length${hole}`] || 0);
+  }
+
+  return total;
+}
+
+function getGolfApiCourseName(course, club) {
+  const clubName = getGolfApiClubName(club);
+  const courseName = course.CourseName || course.courseName;
+
+  if (!courseName) {
+    return clubName;
+  }
+
+  if (String(courseName).toLowerCase() === String(clubName).toLowerCase()) {
+    return clubName;
+  }
+
+  return `${clubName} - ${courseName}`;
+}
+
+function buildHoleParsFromGolfApiCourse(course, totalHoles) {
+  const pars = createDefaultPars(totalHoles);
+
+  for (let hole = 1; hole <= totalHoles; hole++) {
+    const par = Number(course[`Par${hole}`] || course[`par${hole}`] || 0);
+
+    if (par >= 3 && par <= 6) {
+      pars[hole] = par;
+    }
+  }
+
+  return pars;
+}
+
+function buildHoleLengthsFromGolfApiTee(tee, totalHoles) {
+  const lengths = {};
+  const measureUnit = String(tee.MeasureUnit || tee.measureUnit || "").toLowerCase();
+
+  for (let hole = 1; hole <= totalHoles; hole++) {
+    const rawLength = Number(tee[`Length${hole}`] || tee[`length${hole}`] || 0);
+
+    if (rawLength > 0) {
+      lengths[hole] = measureUnit === "m" || measureUnit === "meter" || measureUnit === "meters"
+        ? Math.round(rawLength * 1.09361)
+        : Math.round(rawLength);
+    }
+  }
+
+  return lengths;
 }
 
 function getGolfApiClubName(club) {
@@ -3262,6 +3494,7 @@ function saveCurrentCourseSetup() {
     holeTargets: deepCopy(round.holeTargets || {}),
     holeHazards: deepCopy(round.holeHazards || {}),
     holePars: deepCopy(round.holePars || createDefaultPars(round.totalHoles)),
+    holeLengths: deepCopy(round.holeLengths || {}),
     savedAt: new Date().toISOString()
 };
 
@@ -3430,8 +3663,23 @@ function normalizeImportedCourse(course, index) {
     holeTargets: normalizeImportedHoleTargets(course.holeTargets || {}),
     holeHazards: normalizeImportedHoleHazards(course.holeHazards || {}),
     holePars: normalizeImportedHolePars(course.holePars || course.pars || {}, totalHoles),
+    holeLengths: normalizeImportedHoleLengths(course.holeLengths || course.lengths || course.yardages || {}, totalHoles),
     savedAt: new Date().toISOString()
 };
+}
+
+function normalizeImportedHoleLengths(rawLengths, totalHoles) {
+  const normalizedLengths = {};
+
+  for (let hole = 1; hole <= totalHoles; hole++) {
+    const length = Number(rawLengths[hole]);
+
+    if (length > 0) {
+      normalizedLengths[hole] = Math.round(length);
+    }
+  }
+
+  return normalizedLengths;
 }
 
 function normalizeImportedHolePars(rawPars, totalHoles) {
@@ -3590,6 +3838,9 @@ function renderHoleParInput() {
   if (roundParSummary) {
     roundParSummary.textContent = par;
   }
+  if (roundLengthSummary) {
+    roundLengthSummary.textContent = formatHoleLength(round.currentHole);
+  }
   parSummary.textContent = `Hole ${round.currentHole} is a par ${par}. Total course par: ${getTotalCoursePar()}.`;
 }
 
@@ -3620,6 +3871,24 @@ function getHolePar(hole) {
   }
 
   return round.holePars[hole] || 4;
+}
+
+function getHoleLength(hole) {
+  if (!round.holeLengths) {
+    round.holeLengths = {};
+  }
+
+  return Number(round.holeLengths[hole] || 0);
+}
+
+function formatHoleLength(hole) {
+  const length = getHoleLength(hole);
+
+  if (!length) {
+    return "Yardage not loaded";
+  }
+
+  return `${length} yds`;
 }
 
 function getTotalCoursePar() {

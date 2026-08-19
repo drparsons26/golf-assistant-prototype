@@ -156,7 +156,7 @@
             <div>
               <span>Par</span>
               <strong id="roundParSummary">4</strong>
-              <small>389 yds</small>
+              <small id="roundLengthSummary">Yardage not loaded</small>
             </div>
           </div>
         </div>
@@ -230,6 +230,7 @@
           <button id="previousHoleBtn" type="button">Previous Hole</button>
           <button id="saveScoresBtn" type="button">Save Scores</button>
           <button id="nextHoleBtn" type="button">Next Hole ›</button>
+          <button id="endRoundBtn" type="button" class="danger">End Round</button>
         </div>
 
         <div id="message"></div>
@@ -259,18 +260,18 @@
 
         <div class="yardage-layout app-card">
           <div class="yardage-numbers">
-            <div><span>Back</span><strong>389</strong><small>yards</small></div>
-            <div><span>Center</span><strong>367</strong><small>yards</small></div>
-            <div><span>Front</span><strong>344</strong><small>yards</small></div>
+            <div><span>Back</span><strong>--</strong><small>yards</small></div>
+            <div><span>Center</span><strong>--</strong><small>yards</small></div>
+            <div><span>Front</span><strong>--</strong><small>yards</small></div>
             <button id="getYardageBtn" type="button">How far to the green?</button>
           </div>
           <div class="hole-map" aria-hidden="true">
             <div class="hole-water"></div>
             <div class="hole-fairway"></div>
             <div class="hole-path"></div>
-            <span class="map-pin map-pin-back">389</span>
-            <span class="map-pin map-pin-center">367</span>
-            <span class="map-pin map-pin-front">344</span>
+            <span class="map-pin map-pin-back">--</span>
+            <span class="map-pin map-pin-center">--</span>
+            <span class="map-pin map-pin-front">--</span>
             <i class="bunker b1"></i>
             <i class="bunker b2"></i>
             <i class="bunker b3"></i>

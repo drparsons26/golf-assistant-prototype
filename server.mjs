@@ -360,7 +360,8 @@ function sanitizeRound(round) {
     scores: round.scores || {},
     holeTargets: round.holeTargets || {},
     holeHazards: round.holeHazards || {},
-    holePars: round.holePars || {}
+    holePars: round.holePars || {},
+    holeLengths: round.holeLengths || {}
   };
 }
 
