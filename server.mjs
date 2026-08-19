@@ -12,6 +12,8 @@ loadDotEnv();
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || "0.0.0.0";
 const model = process.env.OPENAI_MODEL || "gpt-5-mini";
+const golfApiBaseUrl = process.env.GOLFAPI_BASE_URL || "https://golfapi.io/api/v2.3";
+const allowedGolfApiResources = new Set(["clubs", "courses", "tees", "coordinates"]);
 
 const mimeTypes = {
   ".css": "text/css",
@@ -32,8 +34,14 @@ createServer(async (req, res) => {
       sendJson(res, 200, {
         ok: true,
         model,
-        openaiConfigured: Boolean(process.env.OPENAI_API_KEY)
+        openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
+        golfApiConfigured: Boolean(process.env.GOLFAPI_API_KEY)
       });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/api/golfapi/")) {
+      await handleGolfApiRequest(url, res);
       return;
     }
 
@@ -142,6 +150,62 @@ async function handleTranscriptionRequest(req, res) {
     sendJson(res, 502, {
       error: "The audio could not be transcribed."
     });
+  }
+}
+
+async function handleGolfApiRequest(url, res) {
+  if (!process.env.GOLFAPI_API_KEY) {
+    sendJson(res, 503, {
+      error: "GOLFAPI key is not configured. Add GOLFAPI_API_KEY to .env, then restart the server."
+    });
+    return;
+  }
+
+  const resource = url.pathname.replace("/api/golfapi/", "").replace(/^\/+|\/+$/g, "");
+
+  if (!allowedGolfApiResources.has(resource)) {
+    sendJson(res, 404, { error: "Unknown GOLFAPI resource." });
+    return;
+  }
+
+  const upstreamUrl = new URL(`${golfApiBaseUrl.replace(/\/+$/g, "")}/${resource}`);
+
+  url.searchParams.forEach((value, key) => {
+    if (value !== "") {
+      upstreamUrl.searchParams.set(key, value);
+    }
+  });
+
+  try {
+    const response = await fetch(upstreamUrl, {
+      headers: {
+        "Authorization": `Bearer ${process.env.GOLFAPI_API_KEY}`,
+        "Accept": "application/json"
+      }
+    });
+
+    const bodyText = await response.text();
+
+    if (!response.ok) {
+      let message = "GOLFAPI request failed.";
+
+      try {
+        const body = JSON.parse(bodyText);
+        message = body.message || body.error || message;
+      } catch {
+        if (bodyText) {
+          message = bodyText;
+        }
+      }
+
+      sendJson(res, response.status, { error: message });
+      return;
+    }
+
+    sendText(res, 200, bodyText || "{}", response.headers.get("content-type") || "application/json");
+  } catch (error) {
+    console.error("GOLFAPI proxy error:", error);
+    sendJson(res, 502, { error: "Could not reach GOLFAPI." });
   }
 }
 

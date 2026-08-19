@@ -111,6 +111,17 @@
             </div>
           </div>
 
+          <div class="golfapi-search-box">
+            <label for="golfApiSearchInput">Find Course with GOLFAPI</label>
+            <div class="course-search-row">
+              <input id="golfApiSearchInput" type="search" placeholder="City or course name" />
+              <input id="golfApiCountryInput" type="text" value="usa" aria-label="Country" />
+            </div>
+            <button id="golfApiSearchBtn" type="button">Search Courses</button>
+            <div id="golfApiSearchStatus" class="course-search-status">Search results will appear here.</div>
+            <div id="golfApiSearchResults" class="course-search-results"></div>
+          </div>
+
           <select id="savedCourseSelect">
             <option value="">No saved course selected</option>
           </select>

@@ -343,6 +343,8 @@ button.danger {
 
 #startRoundBtn,
 #voiceBtn,
+#preRoundVoiceBtn,
+#golfApiSearchBtn,
 .secondary-button {
   width: 100%;
   margin-top: 12px;
@@ -374,6 +376,60 @@ button.danger {
   background: #fff;
   color: var(--green-800);
   border-color: #c8d5c8;
+}
+
+.golfapi-search-box {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--soft-line);
+}
+
+.course-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px;
+  gap: 8px;
+}
+
+.course-search-status {
+  color: var(--green-800);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.course-search-results {
+  display: grid;
+  gap: 8px;
+}
+
+.course-search-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--green-050);
+}
+
+.course-search-result strong,
+.course-search-result span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.course-search-result span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.course-search-result button {
+  min-height: 38px;
+  padding: 8px 10px;
 }
 
 .home-actions {

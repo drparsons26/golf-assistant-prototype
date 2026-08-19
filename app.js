@@ -60,6 +60,11 @@ const hazardList = document.getElementById("hazardList");
 const savedCourseSelect = document.getElementById("savedCourseSelect");
 const loadCourseSetupBtn = document.getElementById("loadCourseSetupBtn");
 const saveCourseSetupBtn = document.getElementById("saveCourseSetupBtn");
+const golfApiSearchInput = document.getElementById("golfApiSearchInput");
+const golfApiCountryInput = document.getElementById("golfApiCountryInput");
+const golfApiSearchBtn = document.getElementById("golfApiSearchBtn");
+const golfApiSearchStatus = document.getElementById("golfApiSearchStatus");
+const golfApiSearchResults = document.getElementById("golfApiSearchResults");
 
 const importCourseDataBtn = document.getElementById("importCourseDataBtn");
 const exportCourseDataBtn = document.getElementById("exportCourseDataBtn");
@@ -111,6 +116,9 @@ addHazardBtn.addEventListener("click", addHazardForCurrentHole);
 clearHazardsBtn.addEventListener("click", clearHazardsForCurrentHole);
 loadCourseSetupBtn.addEventListener("click", loadSelectedCourseSetup);
 saveCourseSetupBtn.addEventListener("click", saveCurrentCourseSetup);
+if (golfApiSearchBtn) {
+  golfApiSearchBtn.addEventListener("click", searchGolfApiCourses);
+}
 importCourseDataBtn.addEventListener("click", function () {
   courseDataFileInput.click();
 });
@@ -3066,6 +3074,162 @@ function loadSelectedCourseSetup() {
   totalHolesSelect.value = String(course.totalHoles);
 
   alert(`${course.courseName} loaded. Now add players and start the round.`);
+}
+
+async function searchGolfApiCourses() {
+  const query = golfApiSearchInput ? golfApiSearchInput.value.trim() : "";
+  const country = golfApiCountryInput ? golfApiCountryInput.value.trim() : "usa";
+
+  if (!query) {
+    setGolfApiSearchStatus("Enter a city or course name to search.");
+    return;
+  }
+
+  setGolfApiSearchStatus("Searching GOLFAPI...");
+  renderGolfApiSearchResults([]);
+
+  try {
+    const params = new URLSearchParams({
+      city: query,
+      country: country || "usa",
+      measureUnit: "km"
+    });
+
+    const response = await fetch(`/api/golfapi/clubs?${params.toString()}`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || "GOLFAPI search failed.");
+    }
+
+    const clubs = normalizeGolfApiClubs(data);
+
+    if (clubs.length === 0) {
+      setGolfApiSearchStatus("No courses found. Try a nearby city or a shorter search term.");
+      return;
+    }
+
+    setGolfApiSearchStatus(`Found ${clubs.length} course${clubs.length === 1 ? "" : "s"}.`);
+    renderGolfApiSearchResults(clubs);
+  } catch (error) {
+    console.error("GOLFAPI search failed.", error);
+    setGolfApiSearchStatus(error.message || "GOLFAPI search failed. Check the API key and try again.");
+  }
+}
+
+function setGolfApiSearchStatus(text) {
+  if (golfApiSearchStatus) {
+    golfApiSearchStatus.textContent = text;
+  }
+}
+
+function normalizeGolfApiClubs(data) {
+  if (Array.isArray(data)) {
+    return data;
+  }
+
+  if (Array.isArray(data.clubs)) {
+    return data.clubs;
+  }
+
+  if (Array.isArray(data.data)) {
+    return data.data;
+  }
+
+  return [];
+}
+
+function renderGolfApiSearchResults(clubs) {
+  if (!golfApiSearchResults) {
+    return;
+  }
+
+  golfApiSearchResults.innerHTML = "";
+
+  clubs.forEach(club => {
+    const item = document.createElement("div");
+    item.className = "course-search-result";
+
+    const details = document.createElement("div");
+    details.innerHTML = `
+      <strong>${escapeHtml(getGolfApiClubName(club))}</strong>
+      <span>${escapeHtml(getGolfApiClubLocation(club))}</span>
+    `;
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Load";
+    button.addEventListener("click", function () {
+      loadGolfApiClubAsCourseSetup(club);
+    });
+
+    item.appendChild(details);
+    item.appendChild(button);
+    golfApiSearchResults.appendChild(item);
+  });
+}
+
+function loadGolfApiClubAsCourseSetup(club) {
+  const courseSetup = buildCourseSetupFromGolfApiClub(club);
+  const savedCourses = getSavedCourseSetups();
+  const existingIndex = savedCourses.findIndex(savedCourse => {
+    return savedCourse.id === courseSetup.id ||
+      savedCourse.courseName.toLowerCase() === courseSetup.courseName.toLowerCase();
+  });
+
+  if (existingIndex >= 0) {
+    courseSetup.id = savedCourses[existingIndex].id;
+    savedCourses[existingIndex] = courseSetup;
+  } else {
+    savedCourses.push(courseSetup);
+  }
+
+  saveCourseSetupsToStorage(savedCourses);
+  renderSavedCourseOptions();
+
+  selectedCourseSetup = courseSetup;
+  courseNameInput.value = courseSetup.courseName;
+  totalHolesSelect.value = String(courseSetup.totalHoles);
+
+  if (savedCourseSelect) {
+    savedCourseSelect.value = courseSetup.id;
+  }
+
+  setGolfApiSearchStatus(`${courseSetup.courseName} loaded. Add players, then start the round.`);
+}
+
+function buildCourseSetupFromGolfApiClub(club) {
+  const clubId = club.clubID || club.clubId || club.id || String(Date.now());
+  const totalHoles = Number(club.numHoles || club.numholes || club.holes || 18) === 9 ? 9 : 18;
+
+  return {
+    id: `golfapi-${clubId}`,
+    courseName: getGolfApiClubName(club),
+    totalHoles: totalHoles,
+    holeTargets: {},
+    holeHazards: {},
+    holePars: createDefaultPars(totalHoles),
+    source: "golfapi",
+    golfApi: {
+      clubID: clubId,
+      latitude: club.latitude || club.Latitude || null,
+      longitude: club.longitude || club.Longitude || null,
+      rawClub: club
+    },
+    savedAt: new Date().toISOString()
+  };
+}
+
+function getGolfApiClubName(club) {
+  return String(club.clubName || club.ClubName || club.name || "Unnamed Course");
+}
+
+function getGolfApiClubLocation(club) {
+  return [
+    club.city || club.City,
+    club.state || club.State,
+    club.country || club.Country
+  ].filter(Boolean).join(", ");
 }
 
 function saveCurrentCourseSetup() {
