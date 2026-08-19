@@ -96,6 +96,21 @@ let voiceResponsesEnabled = false;
 const AI_VOICE_CONFIDENCE_THRESHOLD = 0.72;
 const VOICE_SILENCE_DELAY_MS = 950;
 const AI_VOICE_TIMEOUT_MS = 7500;
+const DEFAULT_CLUB_DISTANCES = [
+  { club: "driver", min: 215, max: 700 },
+  { club: "3 wood", min: 195, max: 230 },
+  { club: "5 wood or hybrid", min: 175, max: 205 },
+  { club: "4 iron or hybrid", min: 165, max: 185 },
+  { club: "5 iron", min: 155, max: 175 },
+  { club: "6 iron", min: 145, max: 160 },
+  { club: "7 iron", min: 135, max: 150 },
+  { club: "8 iron", min: 120, max: 140 },
+  { club: "9 iron", min: 105, max: 125 },
+  { club: "pitching wedge", min: 90, max: 110 },
+  { club: "gap wedge", min: 75, max: 95 },
+  { club: "sand wedge", min: 55, max: 80 },
+  { club: "lob wedge", min: 1, max: 60 }
+];
 let isVoiceCaptureActive = false;
 let voiceFinalTranscript = "";
 let voiceInterimTranscript = "";
@@ -1436,17 +1451,40 @@ async function askVoiceAgent(transcript) {
 }
 
 function buildRoundContextForAgent() {
+  const currentHole = Number(round.currentHole || 1);
+
   return {
     courseName: round.courseName,
     players: round.players,
     totalHoles: round.totalHoles,
-    currentHole: round.currentHole,
+    currentHole: currentHole,
     scores: round.scores,
     holeTargets: round.holeTargets || {},
     holeHazards: round.holeHazards || {},
     holePars: round.holePars || {},
-    holeLengths: round.holeLengths || {}
+    holeLengths: round.holeLengths || {},
+    currentHoleContext: {
+      par: getHolePar(currentHole),
+      lengthYards: getHoleLength(currentHole),
+      greenTarget: (round.holeTargets || {})[currentHole] || null,
+      hazards: (round.holeHazards || {})[currentHole] || []
+    },
+    playerClubProfile: getPlayerClubProfileForAgent()
   };
+}
+
+function getPlayerClubProfileForAgent() {
+  try {
+    return JSON.parse(localStorage.getItem("golfPlayerClubProfile") || "null") || {
+      status: "not_configured",
+      note: "No personal club distances have been saved yet."
+    };
+  } catch {
+    return {
+      status: "not_configured",
+      note: "No personal club distances have been saved yet."
+    };
+  }
 }
 
 function isValidVoiceAgentResult(result) {
@@ -1458,6 +1496,7 @@ function isValidVoiceAgentResult(result) {
     "set_par",
     "go_to_hole",
     "answer_question",
+    "recommend_club",
     "get_green_yardage",
     "get_hazard_distance",
     "clarify",
@@ -1606,6 +1645,11 @@ function executeVoiceAgentAction(result) {
 
   if (result.action === "answer_question") {
     return executeAgentAnswerQuestion(result);
+  }
+
+  if (result.action === "recommend_club") {
+    executeAgentClubRecommendation(result);
+    return true;
   }
 
   if (result.action === "get_green_yardage") {
@@ -1775,6 +1819,143 @@ function executeAgentAnswerQuestion(result) {
 
   showVoiceAgentMessage(response, result.speak);
   return true;
+}
+
+async function executeAgentClubRecommendation(result) {
+  const statedDistance = Number(result.payload.distanceYards || 0);
+
+  if (statedDistance > 0) {
+    const recommendation = buildClubRecommendationMessage(result, statedDistance, "asked distance");
+    showVoiceAgentMessage(recommendation, result.speak);
+    return;
+  }
+
+  const target = getCurrentHoleTarget();
+
+  if (!target || target.center.lat === null || target.center.lng === null) {
+    const fallbackMessage = result.message ||
+      "I can help pick a club, but I need a distance first. Tell me something like, I have 150 yards, what should I hit?";
+    showVoiceAgentMessage(fallbackMessage, true);
+    return;
+  }
+
+  if (!navigator.geolocation) {
+    const noGpsMessage = "I can recommend a club if you tell me the distance. GPS is not supported in this browser.";
+    showVoiceAgentMessage(noGpsMessage, true);
+    return;
+  }
+
+  showVoiceAgentMessage("Getting your yardage so I can make a club call...", false);
+
+  try {
+    const position = await getCurrentPositionForCaddie();
+    const yardages = calculateGreenYardages(
+      position.coords.latitude,
+      position.coords.longitude,
+      target
+    );
+    const distance = yardages.center || yardages.front || yardages.back;
+
+    if (!distance) {
+      showVoiceAgentMessage("I could not calculate a clean yardage. Tell me the distance and I will make a club call.", true);
+      return;
+    }
+
+    const recommendation = buildClubRecommendationMessage(result, distance, "GPS center-green yardage");
+    showVoiceAgentMessage(recommendation, result.speak);
+  } catch (error) {
+    const gpsMessage = `${getLocationErrorMessage(error)} Tell me the distance and I can still recommend a club.`;
+    showVoiceAgentMessage(gpsMessage, true);
+  }
+}
+
+function getCurrentPositionForCaddie() {
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0
+    });
+  });
+}
+
+function buildClubRecommendationMessage(result, distanceYards, distanceSource) {
+  const club = result.payload.recommendedClub ||
+    chooseDefaultClubForDistance(distanceYards);
+  const par = getHolePar(round.currentHole);
+  const holeLength = getHoleLength(round.currentHole);
+  const hazards = getCurrentHoleHazards();
+  const hazardAdvice = buildCaddieHazardAdvice(hazards);
+  const target = result.payload.shotTarget || buildDefaultShotTarget(distanceYards, par);
+  const miss = result.payload.missPreference || buildDefaultMissPreference(hazards);
+  const reason = result.payload.recommendationReason ||
+    `That fits a ${distanceYards}-yard shot using the default club chart.`;
+  const personalDataNote = getPlayerClubProfileForAgent().status === "not_configured"
+    ? "I do not have your personal club distances yet, so treat this as a starting call."
+    : "";
+  const holeContext = holeLength
+    ? `Hole ${round.currentHole} is a par ${par}, ${holeLength} yards.`
+    : `Hole ${round.currentHole} is a par ${par}.`;
+
+  return [
+    `${holeContext} From ${distanceYards} yards, I would hit ${club}.`,
+    `Aim ${target}.`,
+    `Best miss: ${miss}.`,
+    hazardAdvice,
+    reason,
+    personalDataNote,
+    distanceSource === "GPS center-green yardage" ? "This is based on center-green GPS yardage." : ""
+  ].filter(Boolean).join(" ");
+}
+
+function chooseDefaultClubForDistance(distanceYards) {
+  const match = DEFAULT_CLUB_DISTANCES.find(club => {
+    return distanceYards >= club.min && distanceYards <= club.max;
+  });
+
+  return match ? match.club : "a comfortable wedge";
+}
+
+function buildDefaultShotTarget(distanceYards, par) {
+  if (distanceYards >= 215 && par >= 4) {
+    return "at the widest part of the fairway, not directly at trouble";
+  }
+
+  if (distanceYards >= 160) {
+    return "for the center of the green";
+  }
+
+  if (distanceYards >= 80) {
+    return "for the middle number and take enough club";
+  }
+
+  return "for a controlled landing spot, not the flag unless it is safe";
+}
+
+function buildDefaultMissPreference(hazards) {
+  const waterHazard = hazards.find(hazard => String(hazard.type).toLowerCase() === "water");
+
+  if (waterHazard) {
+    return `away from ${waterHazard.name}`;
+  }
+
+  const bunkerHazard = hazards.find(hazard => String(hazard.type).toLowerCase() === "bunker");
+
+  if (bunkerHazard) {
+    return `away from ${bunkerHazard.name}`;
+  }
+
+  return "short and safe rather than long";
+}
+
+function buildCaddieHazardAdvice(hazards) {
+  if (!Array.isArray(hazards) || hazards.length === 0) {
+    return "";
+  }
+
+  const namedHazards = hazards.slice(0, 2).map(hazard => hazard.name).join(" and ");
+
+  return `Watch ${namedHazards}.`;
 }
 
 function handleAgentHazardDistance(result) {

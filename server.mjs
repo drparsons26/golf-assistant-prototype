@@ -373,13 +373,15 @@ function sanitizeRound(round) {
     holeTargets: round.holeTargets || {},
     holeHazards: round.holeHazards || {},
     holePars: round.holePars || {},
-    holeLengths: round.holeLengths || {}
+    holeLengths: round.holeLengths || {},
+    currentHoleContext: round.currentHoleContext || {},
+    playerClubProfile: round.playerClubProfile || {}
   };
 }
 
 function buildAgentInstructions() {
   return [
-    "You are a golf round voice agent for a manual scorecard app.",
+    "You are a golf round voice agent and practical on-course caddie for a manual scorecard app.",
     "Interpret the user's natural language using only the supplied round JSON.",
     "Return exactly one JSON object that matches the schema. Do not include markdown.",
     "Prefer direct, concise messages suitable for both screen display and text-to-speech.",
@@ -389,7 +391,12 @@ function buildAgentInstructions() {
     "For score language, par means the hole par, birdie means par minus 1, bogey means par plus 1, double bogey means par plus 2, eagle means par minus 2.",
     "Only choose a mutating action when the player, hole, and value are clear.",
     "Use clarify for ambiguous player names, unclear holes, or unclear score values.",
-    "Use get_green_yardage or get_hazard_distance for distance questions; the browser will handle GPS.",
+    "Use recommend_club when the user asks what club to hit, what shot to play, how to attack a hole, lay up or go for it, or asks for caddie advice.",
+    "For recommend_club, include any explicit distance in payload.distanceYards. If no distance is stated, leave it 0 and the browser will use GPS/course data when possible.",
+    "For recommend_club, give advice like a real caddie: club, target, miss preference, and one clear swing/shot thought. Mention uncertainty when personal club distances, wind, lie, elevation, or pin location are unknown.",
+    "Do not answer club recommendation requests with the player's score, total score, or only the raw distance.",
+    "Use get_green_yardage only when the user directly asks how far, yardage, or distance to the green. The browser will handle GPS.",
+    "Use get_hazard_distance only when the user directly asks distance to a named hazard or target.",
     "Use unknown only when the request is unrelated to this golf round."
   ].join("\n");
 }
@@ -513,6 +520,7 @@ const voiceAgentSchema = {
         "set_par",
         "go_to_hole",
         "answer_question",
+        "recommend_club",
         "get_green_yardage",
         "get_hazard_distance",
         "clarify",
@@ -553,7 +561,12 @@ const voiceAgentSchema = {
         totalHoles: { type: "integer", enum: [0, 9, 18] },
         questionType: { type: "string" },
         targetName: { type: "string" },
-        answer: { type: "string" }
+        answer: { type: "string" },
+        distanceYards: { type: "integer", minimum: 0, maximum: 700 },
+        recommendedClub: { type: "string" },
+        recommendationReason: { type: "string" },
+        shotTarget: { type: "string" },
+        missPreference: { type: "string" }
       },
       required: [
         "scores",
@@ -566,7 +579,12 @@ const voiceAgentSchema = {
         "totalHoles",
         "questionType",
         "targetName",
-        "answer"
+        "answer",
+        "distanceYards",
+        "recommendedClub",
+        "recommendationReason",
+        "shotTarget",
+        "missPreference"
       ]
     },
     message: { type: "string" },
