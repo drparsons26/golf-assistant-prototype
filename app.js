@@ -95,7 +95,7 @@ let lastVoiceCommandTime = 0;
 let voiceResponsesEnabled = false;
 const AI_VOICE_CONFIDENCE_THRESHOLD = 0.72;
 const VOICE_SILENCE_DELAY_MS = 950;
-const AI_VOICE_TIMEOUT_MS = 4500;
+const AI_VOICE_TIMEOUT_MS = 7500;
 let isVoiceCaptureActive = false;
 let voiceFinalTranscript = "";
 let voiceInterimTranscript = "";
@@ -622,7 +622,7 @@ function resetRound() {
 
   if (caddieConversation) {
     caddieConversation.innerHTML = "";
-    addCaddieBubble("Ready when you are. Try “Who’s winning?” or “I made par.”");
+    addCaddieBubble("Ready when you are. Speak naturally, just like you would to a real caddie.");
   }
 
   clearTargetInputs();
@@ -1068,12 +1068,8 @@ function getVoiceRecognitionErrorMessage(error) {
   return "Voice recognition hit a browser error. Check microphone permissions and try again.";
 }
 async function handleVoiceCommand(transcript) {
-  if (tryHandleFastLocalVoiceCommand(transcript)) {
-    return;
-  }
-
-  setVoiceStatus("Checking that with the AI caddie...");
-  const thinkingBubble = addCaddieBubble("Checking that", "caddie", { thinking: true });
+  setVoiceStatus("Asking the AI caddie...");
+  const thinkingBubble = addCaddieBubble("Asking the AI caddie", "caddie", { thinking: true });
 
   try {
     const agentResult = await askVoiceAgent(transcript);
@@ -1090,6 +1086,13 @@ async function handleVoiceCommand(transcript) {
 
   if (thinkingBubble && thinkingBubble.parentElement) {
     thinkingBubble.remove();
+  }
+
+  setVoiceStatus("AI caddie unavailable. Trying backup command handling...");
+  addCaddieBubble("The AI caddie did not answer in time, so I’m trying the backup command handler.", "system");
+
+  if (tryHandleFastLocalVoiceCommand(transcript)) {
+    return;
   }
 
   if (round.players.length === 0) {
