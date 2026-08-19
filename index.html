@@ -184,8 +184,19 @@
         </div>
 
         <div class="voice-box app-card">
-          <h3>Voice Caddie</h3>
-          <p>Speak naturally. Ask who is winning, enter scores, change a score, move holes, or ask about yardage.</p>
+          <div class="caddie-header">
+            <div class="caddie-avatar" aria-hidden="true">⚑</div>
+            <div>
+              <h3>Voice Caddie</h3>
+              <p>Ask naturally. I’ll handle simple round questions instantly and use AI only when needed.</p>
+            </div>
+          </div>
+
+          <div id="caddieConversation" class="caddie-conversation" aria-live="polite">
+            <div class="caddie-bubble caddie-bubble-caddie">
+              Ready when you are. Try “Who’s winning?” or “I made par.”
+            </div>
+          </div>
 
           <button id="voiceBtn" type="button">🎙 Start Listening</button>
 

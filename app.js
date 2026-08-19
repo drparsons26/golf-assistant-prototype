@@ -39,6 +39,7 @@ const preRoundVoiceBtn = document.getElementById("preRoundVoiceBtn");
 const voiceStatus = document.getElementById("voiceStatus");
 const preRoundVoiceStatus = document.getElementById("preRoundVoiceStatus");
 const transcriptText = document.getElementById("transcriptText");
+const caddieConversation = document.getElementById("caddieConversation");
 
 const yardageSection = document.getElementById("yardageSection");
 const frontLatInput = document.getElementById("frontLat");
@@ -93,7 +94,8 @@ let lastVoiceCommand = "";
 let lastVoiceCommandTime = 0;
 let voiceResponsesEnabled = false;
 const AI_VOICE_CONFIDENCE_THRESHOLD = 0.72;
-const VOICE_SILENCE_DELAY_MS = 1800;
+const VOICE_SILENCE_DELAY_MS = 950;
+const AI_VOICE_TIMEOUT_MS = 4500;
 let isVoiceCaptureActive = false;
 let voiceFinalTranscript = "";
 let voiceInterimTranscript = "";
@@ -229,6 +231,44 @@ function setVoiceStatus(text) {
       statusElement.textContent = text;
     }
   });
+}
+
+function addCaddieBubble(text, type = "caddie", options = {}) {
+  if (!caddieConversation || !text) {
+    return null;
+  }
+
+  const bubble = document.createElement("div");
+  bubble.className = `caddie-bubble caddie-bubble-${type}`;
+
+  if (options.thinking) {
+    bubble.classList.add("caddie-bubble-thinking");
+  }
+
+  bubble.textContent = text;
+  caddieConversation.appendChild(bubble);
+
+  while (caddieConversation.children.length > 8) {
+    caddieConversation.removeChild(caddieConversation.firstElementChild);
+  }
+
+  caddieConversation.scrollTop = caddieConversation.scrollHeight;
+  return bubble;
+}
+
+function updateCaddieBubble(bubble, text, type = "caddie") {
+  if (!bubble) {
+    return addCaddieBubble(text, type);
+  }
+
+  bubble.className = `caddie-bubble caddie-bubble-${type}`;
+  bubble.textContent = text;
+
+  if (caddieConversation) {
+    caddieConversation.scrollTop = caddieConversation.scrollHeight;
+  }
+
+  return bubble;
 }
 
 function showRoundScreen() {
@@ -580,6 +620,11 @@ function resetRound() {
     transcriptText.textContent = "";
   }
 
+  if (caddieConversation) {
+    caddieConversation.innerHTML = "";
+    addCaddieBubble("Ready when you are. Try “Who’s winning?” or “I made par.”");
+  }
+
   clearTargetInputs();
   yardageResult.textContent = "No yardage calculated yet.";
 
@@ -658,7 +703,7 @@ function setupVoiceRecognition() {
     const visibleTranscript = getPendingVoiceTranscript();
 
     if (visibleTranscript) {
-      transcriptText.textContent = visibleTranscript;
+      transcriptText.textContent = `Hearing: ${visibleTranscript}`;
       scheduleVoiceCommandFinalization();
     }
   };
@@ -816,6 +861,7 @@ async function handleAudioRecordingComplete() {
     }
 
     transcriptText.textContent = transcript;
+    addCaddieBubble(transcript, "user");
     setVoiceStatus("Heard it. Thinking...");
     await handleVoiceCommand(transcript);
   } catch (error) {
@@ -970,6 +1016,7 @@ async function finalizeVoiceCommandNow() {
   lastVoiceCommand = normalizedTranscript;
   lastVoiceCommandTime = now;
   transcriptText.textContent = transcript;
+  addCaddieBubble(transcript, "user");
   setVoiceStatus("Heard it. Thinking...");
 
   try {
@@ -1025,16 +1072,24 @@ async function handleVoiceCommand(transcript) {
     return;
   }
 
-  setVoiceStatus("Thinking through that with the AI caddie...");
+  setVoiceStatus("Checking that with the AI caddie...");
+  const thinkingBubble = addCaddieBubble("Checking that", "caddie", { thinking: true });
 
   try {
     const agentResult = await askVoiceAgent(transcript);
 
     if (agentResult && executeVoiceAgentAction(agentResult)) {
+      if (thinkingBubble && thinkingBubble.parentElement) {
+        thinkingBubble.remove();
+      }
       return;
     }
   } catch (error) {
     console.warn("AI voice agent unavailable, using legacy parser.", error);
+  }
+
+  if (thinkingBubble && thinkingBubble.parentElement) {
+    thinkingBubble.remove();
   }
 
   if (round.players.length === 0) {
@@ -1126,6 +1181,7 @@ function tryHandleFastLocalVoiceCommand(transcript) {
 function showFastCaddieMessage(text, shouldSpeak) {
   message.textContent = text;
   setVoiceStatus(text);
+  addCaddieBubble(text, "caddie");
 
   if (shouldSpeak) {
     speakText(text);
@@ -1341,7 +1397,7 @@ async function askVoiceAgent(transcript) {
   const controller = new AbortController();
   const timeoutId = setTimeout(function () {
     controller.abort();
-  }, 10000);
+  }, AI_VOICE_TIMEOUT_MS);
 
   try {
     const response = await fetch("/api/voice-agent", {
@@ -1732,6 +1788,7 @@ function handleAgentHazardDistance(result) {
 function showVoiceAgentMessage(text, shouldSpeak) {
   message.textContent = text;
   setVoiceStatus(text);
+  addCaddieBubble(text, "caddie");
 
   if (shouldSpeak) {
     speakText(text);
