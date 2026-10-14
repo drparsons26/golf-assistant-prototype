@@ -15,6 +15,16 @@ const model = process.env.OPENAI_MODEL || "gpt-5-mini";
 const golfApiBaseUrl = process.env.GOLFAPI_BASE_URL || "https://golfapi.io/api/v2.3";
 const allowedGolfApiResources = new Set(["clubs", "courses", "coordinates"]);
 
+const publicFiles = new Set([
+  "index.html",
+  "app.js",
+  "style.css",
+  "manifest.webmanifest",
+  "service-worker.js",
+  "make-icons.html"
+]);
+const publicDirectories = new Set(["icons"]);
+
 const mimeTypes = {
   ".css": "text/css",
   ".html": "text/html",
@@ -222,11 +232,27 @@ async function handleGolfApiRequest(url, res) {
 }
 
 async function serveStaticFile(pathname, res) {
-  const relativePath = pathname === "/" ? "index.html" : decodeURIComponent(pathname.slice(1));
-  const requestedPath = path.normalize(path.join(__dirname, relativePath));
+  let decodedPath;
 
-  if (!requestedPath.startsWith(__dirname)) {
-    sendText(res, 403, "Forbidden", "text/plain");
+  try {
+    decodedPath = decodeURIComponent(pathname.slice(1));
+  } catch {
+    sendText(res, 400, "Bad request", "text/plain");
+    return;
+  }
+
+  const assetPath = (decodedPath.replace(/\\/g, "/") || "index.html");
+
+  if (!isPublicAssetPath(assetPath)) {
+    sendText(res, 404, "Not found", "text/plain");
+    return;
+  }
+
+  const requestedPath = path.join(__dirname, assetPath);
+  const pathFromRoot = path.relative(__dirname, requestedPath);
+
+  if (pathFromRoot === "" || pathFromRoot.startsWith("..") || path.isAbsolute(pathFromRoot)) {
+    sendText(res, 404, "Not found", "text/plain");
     return;
   }
 
@@ -236,6 +262,25 @@ async function serveStaticFile(pathname, res) {
   } catch {
     sendText(res, 404, "Not found", "text/plain");
   }
+}
+
+function isPublicAssetPath(assetPath) {
+  const segments = assetPath.split("/");
+
+  if (segments.some(segment => segment === "" || segment === "." || segment === ".." || segment.startsWith("."))) {
+    return false;
+  }
+
+  if (segments.length === 1) {
+    return publicFiles.has(segments[0]);
+  }
+
+  if (segments.length === 2) {
+    return publicDirectories.has(segments[0]) &&
+      Object.hasOwn(mimeTypes, path.extname(segments[1]));
+  }
+
+  return false;
 }
 
 async function callVoiceAgent(context) {

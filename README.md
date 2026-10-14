@@ -232,6 +232,15 @@ Voice-agent JSON bodies are limited to 256 KiB and audio bodies to 12 MiB. OpenA
 
 Each AI-first voice request can incur OpenAI usage; recorded-audio transcription can incur separate usage. GOLFAPI requests occur during course search/loading, rather than inherently once per spoken hole question. Reusing locally saved targets permits GPS calculations without refetching the course. There is no shared server-side course cache or usage-budget system yet.
 
+### Static File Serving
+
+The server does not serve arbitrary files from the project directory. It serves only an explicit public allowlist:
+
+- `index.html`, `app.js`, `style.css`, `manifest.webmanifest`, `service-worker.js`, `make-icons.html`
+- files directly inside `icons/` with a known asset extension
+
+Every other request path returns `404 Not found`, including `.env`, `.env.example`, `server.mjs`, `package.json`, `.gitignore`, any dot-file or dot-directory such as `.git/`, nested paths outside `icons/`, and encoded traversal attempts like `/..%2F.env`. `.gitignore` controls Git tracking only; this allowlist is the HTTP access control.
+
 ## Repository Guide
 
 | File | Role |
@@ -283,8 +292,7 @@ Before expanding beyond prototype testing, remaining work includes:
 - Wind, lie, elevation, and other contextual inputs for caddie advice.
 - Streaming or Realtime conversation for smoother voice interaction.
 - Accounts, durable storage, cross-device sync, and conversation memory.
-- Endpoint authentication, abuse controls, rate limits, and cost monitoring.
-- Production static-file restrictions: the current server reads files from the project directory and does not explicitly block `.env` or backend files. `.gitignore` prevents Git tracking but is not an HTTP access control. Do not place a credential-bearing `.env` in a publicly served directory without correcting this behavior.
+- Endpoint authentication, abuse controls, rate limits, and cost monitoring. `/api/voice-agent`, `/api/transcribe`, and the GOLFAPI proxy are currently open on the deployed URL, so anyone with the URL can spend OpenAI and GOLFAPI quota.
 - Production privacy/data handling, broader tests, and native store packaging.
 
 The current app does not collect a centralized dataset of user conversations or learn automatically from a golfer's history. Round context and transcripts are sent to OpenAI when the AI agent is used, and audio is sent for server transcription when that fallback is used. Smart glasses, scheduled autonomous improvements, and email reports were discussed as future possibilities and are not implemented app features.
