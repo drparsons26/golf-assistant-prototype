@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: golf-assistant-prototype
+    runtime: node
+    plan: free
+    region: oregon
+    branch: main
+    autoDeploy: true
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: OPENAI_MODEL
+        value: gpt-5-mini
+      - key: OPENAI_TRANSCRIBE_MODEL
+        value: gpt-4o-mini-transcribe
+      - key: GOLFAPI_BASE_URL
+        value: https://golfapi.io/api/v2.3
+      # Secrets are set in the Render dashboard or through the API, never here.
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GOLFAPI_API_KEY
+        sync: false
+      - key: APP_ACCESS_TOKEN
+        sync: false

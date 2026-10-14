@@ -219,7 +219,7 @@ Check [http://127.0.0.1:3000/api/health](http://127.0.0.1:3000/api/health) to se
 
 ## Render Deployment and Phone Testing
 
-The project has been tested using a Render Node web service connected to GitHub.
+The app runs as a Render Node web service: `golf-assistant-prototype` (`srv-d9nrim3ncjis73apnf20`), free plan, Oregon region, deploying `main` automatically on every commit, at [https://golf-assistant-prototype.onrender.com](https://golf-assistant-prototype.onrender.com). `render.yaml` records that configuration in this repository. The service is not currently linked to the blueprint, so the file documents and validates the setup rather than driving it; the dashboard and API remain the source of truth until a blueprint is linked.
 
 1. Connect the service to this repository and the intended branch, normally `main`.
 2. Set the service root directory to the folder containing `package.json` and `server.mjs`. Leave it blank if those files are at the repository root.
@@ -232,6 +232,45 @@ Local edits do not change Render. Commit and push them to the connected branch. 
 For same-Wi-Fi layout testing, use `http://<computer-Wi-Fi-IPv4>:3000` while the local server is running. Phone microphone and location features generally require HTTPS, so the deployed HTTPS site is the appropriate field-test environment. The hosted app does not require the development computer to stay on.
 
 Use the phone browser's home-screen installation option where available. An installed PWA remains a web app, not a native store app.
+
+### Managing the Service from a Terminal
+
+Everything in the dashboard is also available through the Render CLI and REST API, which avoids clicking through the dashboard to check a deploy or change a variable.
+
+Authenticate once by creating an API key in Render account settings and exporting it as `RENDER_API_KEY`. Treat it as a full-account credential: it can modify every service in the workspace, and it should never be committed or pasted into a shared transcript.
+
+```bash
+export RENDER_API_KEY=...            # never commit this value
+SERVICE=srv-d9nrim3ncjis73apnf20
+
+# Current configuration and deploy history
+curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
+  "https://api.render.com/v1/services/$SERVICE"
+curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
+  "https://api.render.com/v1/services/$SERVICE/deploys?limit=5"
+
+# Set one environment variable without touching the others
+curl -s -X PUT -H "Authorization: Bearer $RENDER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"value":"new-value"}' \
+  "https://api.render.com/v1/services/$SERVICE/env-vars/APP_ACCESS_TOKEN"
+
+# Apply it: environment changes made through the API do not redeploy on their own
+curl -s -X POST -H "Authorization: Bearer $RENDER_API_KEY" \
+  -H "Content-Type: application/json" -d '{"clearCache":"do_not_clear"}' \
+  "https://api.render.com/v1/services/$SERVICE/deploys"
+```
+
+The CLI covers the same ground once `RENDER_API_KEY` is set, using `-o json --confirm` for non-interactive use:
+
+```bash
+render services -o json --confirm
+render deploys create $SERVICE --wait -o json --confirm
+render logs --resources $SERVICE --limit 50 -o text --confirm
+render blueprints validate render.yaml -o json --confirm
+```
+
+A deployed build is only confirmed when `/api/health` responds and the deploy's status is `live`.
 
 ## Backend Endpoints
 
@@ -276,6 +315,8 @@ Every other request path returns `404 Not found`, including `.env`, `.env.exampl
 | `package.json` | Project metadata and start/dev scripts |
 | `.env.example` | Environment-variable template without credentials |
 | `.gitignore` | Excludes local `.env`, dependencies, and selected logs |
+| `.gitattributes` | Pins text files to LF line endings |
+| `render.yaml` | Render service configuration for reference and validation |
 | `manifest.webmanifest` | PWA name, appearance, launch path, and icons |
 | `service-worker.js` | Network-first asset caching with offline fallback |
 | `icons/` | App icon assets |
