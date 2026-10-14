@@ -1109,6 +1109,70 @@ button.danger {
   font-size: 13px;
 }
 
+.settings-form label {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.settings-form > p {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.club-distance-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.club-distance-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 40px;
+  gap: 8px;
+  align-items: center;
+}
+
+.club-distance-row input {
+  margin: 0;
+}
+
+#clubProfileStatus,
+#accessCodeStatus,
+#shotHistorySummary,
+#shotLogStatus,
+#courseLoadStatus {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.course-load-panel {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface, #fff);
+}
+
+.course-load-panel h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.course-load-panel label {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.shot-log-card .button-row {
+  margin-top: 10px;
+}
+
 .bottom-nav {
   position: fixed;
   left: 50%;

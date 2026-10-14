@@ -1,4 +1,4 @@
-const CACHE_NAME = "golf-assistant-cache-v20";
+const CACHE_NAME = "golf-assistant-cache-v21";
 
 const FILES_TO_CACHE = [
   "./",
@@ -40,17 +40,29 @@ self.addEventListener("activate", function (event) {
 self.addEventListener("fetch", function (event) {
   const requestUrl = new URL(event.request.url);
 
-  if (event.request.method !== "GET" || requestUrl.pathname.startsWith("/api/")) {
+  if (event.request.method !== "GET" ||
+    requestUrl.origin !== self.location.origin ||
+    requestUrl.pathname.startsWith("/api/")) {
     return;
   }
 
   event.respondWith(
-    caches.match(event.request).then(function (cachedResponse) {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
+    fetch(event.request)
+      .then(function (response) {
+        if (response && response.ok) {
+          const copy = response.clone();
 
-      return fetch(event.request);
-    })
+          caches.open(CACHE_NAME).then(function (cache) {
+            cache.put(event.request, copy);
+          });
+        }
+
+        return response;
+      })
+      .catch(function () {
+        return caches.match(event.request).then(function (cachedResponse) {
+          return cachedResponse || caches.match("./index.html");
+        });
+      })
   );
 });

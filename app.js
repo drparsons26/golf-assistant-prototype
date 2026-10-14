@@ -87,6 +87,38 @@ const roundParSummary = document.getElementById("roundParSummary");
 const roundLengthSummary = document.getElementById("roundLengthSummary");
 const navButtons = document.querySelectorAll("[data-nav-target]");
 
+const accessCodeInput = document.getElementById("accessCodeInput");
+const accessCodeHint = document.getElementById("accessCodeHint");
+const accessCodeStatus = document.getElementById("accessCodeStatus");
+const saveAccessCodeBtn = document.getElementById("saveAccessCodeBtn");
+const clearAccessCodeBtn = document.getElementById("clearAccessCodeBtn");
+
+const clubDistanceList = document.getElementById("clubDistanceList");
+const addClubRowBtn = document.getElementById("addClubRowBtn");
+const saveClubProfileBtn = document.getElementById("saveClubProfileBtn");
+const clearClubProfileBtn = document.getElementById("clearClubProfileBtn");
+const clubProfileStatus = document.getElementById("clubProfileStatus");
+
+const shotClubInput = document.getElementById("shotClubInput");
+const shotClubOptions = document.getElementById("shotClubOptions");
+const shotDistanceInput = document.getElementById("shotDistanceInput");
+const shotResultInput = document.getElementById("shotResultInput");
+const shotLieInput = document.getElementById("shotLieInput");
+const logShotBtn = document.getElementById("logShotBtn");
+const useGpsForShotBtn = document.getElementById("useGpsForShotBtn");
+const shotLogStatus = document.getElementById("shotLogStatus");
+const shotHistorySummary = document.getElementById("shotHistorySummary");
+const exportShotLogBtn = document.getElementById("exportShotLogBtn");
+const clearShotLogBtn = document.getElementById("clearShotLogBtn");
+
+const courseLoadPanel = document.getElementById("courseLoadPanel");
+const courseLoadTitle = document.getElementById("courseLoadTitle");
+const courseLoadStatus = document.getElementById("courseLoadStatus");
+const golfApiCourseSelect = document.getElementById("golfApiCourseSelect");
+const golfApiTeeSelect = document.getElementById("golfApiTeeSelect");
+const confirmCourseLoadBtn = document.getElementById("confirmCourseLoadBtn");
+const cancelCourseLoadBtn = document.getElementById("cancelCourseLoadBtn");
+
 let recognition = null;
 let selectedCourseSetup = null;
 let isHandlingVoiceCommand = false;
@@ -96,6 +128,18 @@ let voiceResponsesEnabled = false;
 const AI_VOICE_CONFIDENCE_THRESHOLD = 0.72;
 const VOICE_SILENCE_DELAY_MS = 950;
 const AI_VOICE_TIMEOUT_MS = 7500;
+const MIN_SHOTS_FOR_LEARNED_CLUB = 3;
+const SHOT_LOG_LIMIT = 500;
+const ACCESS_TOKEN_STORAGE_KEY = "golfAppAccessToken";
+const CLUB_PROFILE_STORAGE_KEY = "golfPlayerClubProfile";
+const SHOT_LOG_STORAGE_KEY = "golfShotLog";
+let pendingCourseLoad = null;
+const golfApiCourseCache = new Map();
+let clubProfileCache = null;
+let shotLogCache = null;
+let learnedClubCache = null;
+let savedCourseCache = null;
+let serverRequiresAccessCode = false;
 const DEFAULT_CLUB_DISTANCES = [
   { club: "driver", min: 215, max: 700 },
   { club: "3 wood", min: 195, max: 230 },
@@ -158,6 +202,21 @@ if (preRoundVoiceBtn) {
   preRoundVoiceBtn.addEventListener("click", startVoiceRecognition);
 }
 
+saveAccessCodeBtn.addEventListener("click", saveAccessCodeFromSettings);
+clearAccessCodeBtn.addEventListener("click", clearAccessCode);
+addClubRowBtn.addEventListener("click", function () {
+  addClubDistanceRow({ club: "", carryYards: "" });
+});
+saveClubProfileBtn.addEventListener("click", saveClubProfileFromSettings);
+clearClubProfileBtn.addEventListener("click", clearClubProfile);
+logShotBtn.addEventListener("click", logShotFromForm);
+useGpsForShotBtn.addEventListener("click", fillShotDistanceFromGps);
+exportShotLogBtn.addEventListener("click", exportShotLog);
+clearShotLogBtn.addEventListener("click", clearShotLog);
+confirmCourseLoadBtn.addEventListener("click", confirmCourseLoadSelection);
+cancelCourseLoadBtn.addEventListener("click", closeCourseLoadPanel);
+golfApiCourseSelect.addEventListener("change", handleCourseSelectionChange);
+
 navButtons.forEach(button => {
   button.addEventListener("click", function () {
     showAppScreen(button.dataset.navTarget);
@@ -169,6 +228,12 @@ window.addEventListener("load", function () {
   loadSavedRound();
   updateRoundEntryButtons();
   setupVoiceRecognition();
+  renderAccessCodeSettings();
+  renderClubProfileEditor();
+  renderShotHistorySummary();
+  renderShotClubOptions();
+  renderShotLogStatus();
+  checkServerAccessRequirement();
 });
 
 function startRound() {
@@ -330,6 +395,12 @@ function showAppScreen(target) {
     renderHoleHazards();
   }
 
+  if (normalizedTarget === "settingsSection") {
+    renderAccessCodeSettings();
+    renderClubProfileStatus();
+    renderShotHistorySummary();
+  }
+
   Object.values(screens).forEach(screen => {
     if (screen) {
       screen.classList.add("hidden");
@@ -387,6 +458,7 @@ function renderCurrentHole() {
   renderHoleParInput();
   renderHoleTargetInputs();
   renderHoleHazards();
+  renderShotLogStatus();
 }
 
 function saveScores() {
@@ -893,19 +965,19 @@ async function handleAudioRecordingComplete() {
 async function transcribeVoiceAudio(audioBlob) {
   const response = await fetch("/api/transcribe", {
     method: "POST",
-    headers: {
-      "Content-Type": audioBlob.type || "audio/webm"
-    },
+    headers: withAccessHeaders({ "Content-Type": audioBlob.type || "audio/webm" }),
     body: audioBlob
   });
+
+  if (!response.ok) {
+    const error = await buildApiError(response, "Audio transcription");
+
+    throw new Error(error.userMessage || error.message || "Audio transcription failed.");
+  }
 
   const body = await response.json().catch(function () {
     return {};
   });
-
-  if (!response.ok) {
-    throw new Error(body.error || "Audio transcription failed.");
-  }
 
   return typeof body.transcript === "string" ? body.transcript.trim() : "";
 }
@@ -1096,6 +1168,16 @@ async function handleVoiceCommand(transcript) {
       return;
     }
   } catch (error) {
+    if (error && error.userMessage) {
+      if (thinkingBubble && thinkingBubble.parentElement) {
+        thinkingBubble.remove();
+      }
+
+      setVoiceStatus("Voice caddie request blocked.");
+      showVoiceAgentMessage(error.userMessage, true);
+      return;
+    }
+
     console.warn("AI voice agent unavailable, using legacy parser.", error);
   }
 
@@ -1420,9 +1502,7 @@ async function askVoiceAgent(transcript) {
   try {
     const response = await fetch("/api/voice-agent", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: withAccessHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         transcript: transcript,
         round: buildRoundContextForAgent(),
@@ -1435,7 +1515,7 @@ async function askVoiceAgent(transcript) {
     });
 
     if (!response.ok) {
-      throw new Error(`Voice agent request failed with ${response.status}.`);
+      throw await buildApiError(response, "Voice agent");
     }
 
     const result = await response.json();
@@ -1450,6 +1530,37 @@ async function askVoiceAgent(transcript) {
   }
 }
 
+function withAccessHeaders(headers) {
+  const token = getAppAccessToken();
+
+  if (!token) {
+    return headers || {};
+  }
+
+  return { ...(headers || {}), "X-App-Token": token };
+}
+
+async function buildApiError(response, label) {
+  const body = await response.json().catch(function () {
+    return {};
+  });
+  const error = new Error(body.error || `${label} request failed with ${response.status}.`);
+
+  error.status = response.status;
+
+  if (body.code === "access_code_required") {
+    error.userMessage = "This server needs an access code. Open Settings and enter the access code, then try again.";
+  } else if (response.status === 401 || response.status === 403) {
+    error.userMessage = "The server's provider key was rejected. Check the GOLFAPI or OpenAI key on the server.";
+  } else if (response.status === 429) {
+    error.userMessage = body.error || "Too many requests in a short time. Wait a moment and ask again.";
+  } else if (response.status === 503) {
+    error.userMessage = body.error || "The server is missing an API key for that request.";
+  }
+
+  return error;
+}
+
 function buildRoundContextForAgent() {
   const currentHole = Number(round.currentHole || 1);
 
@@ -1459,32 +1570,39 @@ function buildRoundContextForAgent() {
     totalHoles: round.totalHoles,
     currentHole: currentHole,
     scores: round.scores,
-    holeTargets: round.holeTargets || {},
-    holeHazards: round.holeHazards || {},
     holePars: round.holePars || {},
     holeLengths: round.holeLengths || {},
     currentHoleContext: {
       par: getHolePar(currentHole),
       lengthYards: getHoleLength(currentHole),
       greenTarget: (round.holeTargets || {})[currentHole] || null,
-      hazards: (round.holeHazards || {})[currentHole] || []
+      hazards: (round.holeHazards || {})[currentHole] || [],
+      hasGreenTargetsOnOtherHoles: Object.keys(round.holeTargets || {}).length > 0
     },
     playerClubProfile: getPlayerClubProfileForAgent()
   };
 }
 
 function getPlayerClubProfileForAgent() {
-  try {
-    return JSON.parse(localStorage.getItem("golfPlayerClubProfile") || "null") || {
-      status: "not_configured",
-      note: "No personal club distances have been saved yet."
-    };
-  } catch {
+  const clubs = getEffectiveClubDistances();
+
+  if (clubs.length === 0) {
     return {
       status: "not_configured",
-      note: "No personal club distances have been saved yet."
+      note: "No personal club distances have been saved and no clubs have enough logged shots yet."
     };
   }
+
+  return {
+    status: "configured",
+    clubs: clubs.map(entry => ({
+      club: entry.club,
+      carryYards: entry.carryYards,
+      source: entry.source,
+      shots: entry.shots
+    })),
+    note: "Carry distances come from the golfer's saved profile and logged shots. Prefer these over any general chart."
+  };
 }
 
 function isValidVoiceAgentResult(result) {
@@ -1880,22 +1998,20 @@ function getCurrentPositionForCaddie() {
 }
 
 function buildClubRecommendationMessage(result, distanceYards, distanceSource) {
-  const club = result.payload.recommendedClub ||
-    chooseDefaultClubForDistance(distanceYards);
+  const personalChoice = chooseClubFromPersonalDistances(distanceYards);
+  const club = personalChoice ? personalChoice.club : (result.payload.recommendedClub || chooseDefaultClubForDistance(distanceYards));
   const par = getHolePar(round.currentHole);
   const holeLength = getHoleLength(round.currentHole);
   const hazards = getCurrentHoleHazards();
   const hazardAdvice = buildCaddieHazardAdvice(hazards);
   const target = result.payload.shotTarget || buildDefaultShotTarget(distanceYards, par);
   const miss = result.payload.missPreference || buildDefaultMissPreference(hazards);
-  const reason = result.payload.recommendationReason ||
-    `That fits a ${distanceYards}-yard shot using the default club chart.`;
-  const personalDataNote = getPlayerClubProfileForAgent().status === "not_configured"
-    ? "I do not have your personal club distances yet, so treat this as a starting call."
-    : "";
+  const reason = buildClubRecommendationReason(result, personalChoice, distanceYards);
   const holeContext = holeLength
     ? `Hole ${round.currentHole} is a par ${par}, ${holeLength} yards.`
     : `Hole ${round.currentHole} is a par ${par}.`;
+
+  prefillShotLogFromRecommendation(club, distanceYards);
 
   return [
     `${holeContext} From ${distanceYards} yards, I would hit ${club}.`,
@@ -1903,9 +2019,31 @@ function buildClubRecommendationMessage(result, distanceYards, distanceSource) {
     `Best miss: ${miss}.`,
     hazardAdvice,
     reason,
-    personalDataNote,
     distanceSource === "GPS center-green yardage" ? "This is based on center-green GPS yardage." : ""
   ].filter(Boolean).join(" ");
+}
+
+function buildClubRecommendationReason(result, personalChoice, distanceYards) {
+  if (personalChoice && personalChoice.source === "learned") {
+    return `Your logged shots put that club around ${personalChoice.carryYards} yards over ${personalChoice.shots} swings.`;
+  }
+
+  if (personalChoice) {
+    return `Your saved profile carries that club about ${personalChoice.carryYards} yards.`;
+  }
+
+  return result.payload.recommendationReason ||
+    `That fits a ${distanceYards}-yard shot using the general club chart. Add your club distances in Settings for a personal call.`;
+}
+
+function prefillShotLogFromRecommendation(club, distanceYards) {
+  if (shotClubInput && !shotClubInput.value) {
+    shotClubInput.value = club;
+  }
+
+  if (shotDistanceInput && !shotDistanceInput.value) {
+    shotDistanceInput.value = String(distanceYards);
+  }
 }
 
 function chooseDefaultClubForDistance(distanceYards) {
@@ -3303,21 +3441,31 @@ function buildAllHazardsMessage(hazardsWithDistance) {
 // -------------------------------
 
 function getSavedCourseSetups() {
+  if (savedCourseCache) {
+    return savedCourseCache;
+  }
+
   const savedCourses = localStorage.getItem("golfCourseSetups");
 
   if (!savedCourses) {
-    return [];
+    savedCourseCache = [];
+    return savedCourseCache;
   }
 
   try {
-    return JSON.parse(savedCourses);
+    const parsed = JSON.parse(savedCourses);
+
+    savedCourseCache = Array.isArray(parsed) ? parsed : [];
   } catch {
-    return [];
+    savedCourseCache = [];
   }
+
+  return savedCourseCache;
 }
 
 function saveCourseSetupsToStorage(courses) {
   localStorage.setItem("golfCourseSetups", JSON.stringify(courses));
+  savedCourseCache = courses;
 }
 
 function renderSavedCourseOptions() {
@@ -3375,21 +3523,14 @@ async function searchGolfApiCourses() {
 
   setGolfApiSearchStatus("Searching GOLFAPI...");
   renderGolfApiSearchResults([]);
+  closeCourseLoadPanel();
 
   try {
-    const params = new URLSearchParams({
+    const data = await fetchGolfApiJson("clubs", {
       city: query,
       country: country || "usa",
       measureUnit: "km"
     });
-
-    const response = await fetch(`/api/golfapi/clubs?${params.toString()}`);
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || "GOLFAPI search failed.");
-    }
-
     const clubs = normalizeGolfApiClubs(data);
 
     if (clubs.length === 0) {
@@ -3397,11 +3538,11 @@ async function searchGolfApiCourses() {
       return;
     }
 
-    setGolfApiSearchStatus(`Found ${clubs.length} course${clubs.length === 1 ? "" : "s"}.`);
+    setGolfApiSearchStatus(`Found ${clubs.length} club${clubs.length === 1 ? "" : "s"}. Choose one to pick its course and tee.`);
     renderGolfApiSearchResults(clubs);
   } catch (error) {
     console.error("GOLFAPI search failed.", error);
-    setGolfApiSearchStatus(error.message || "GOLFAPI search failed. Check the API key and try again.");
+    setGolfApiSearchStatus(error.userMessage || error.message || "GOLFAPI search failed. Check the API key and try again.");
   }
 }
 
@@ -3446,13 +3587,9 @@ function renderGolfApiSearchResults(clubs) {
 
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = "Load";
-    button.addEventListener("click", async function () {
-      button.disabled = true;
-      button.textContent = "Loading...";
-      await loadGolfApiClubAsCourseSetup(club);
-      button.disabled = false;
-      button.textContent = "Load";
+    button.textContent = "Select";
+    button.addEventListener("click", function () {
+      openCourseLoadPanel(club);
     });
 
     item.appendChild(details);
@@ -3461,10 +3598,126 @@ function renderGolfApiSearchResults(clubs) {
   });
 }
 
-async function loadGolfApiClubAsCourseSetup(club) {
-  setGolfApiSearchStatus(`Loading ${getGolfApiClubName(club)} details...`);
+async function openCourseLoadPanel(club) {
+  pendingCourseLoad = { club: club, courses: [], course: null };
 
-  const courseSetup = await buildCourseSetupFromGolfApiClub(club);
+  courseLoadPanel.classList.remove("hidden");
+  courseLoadTitle.textContent = `Choose a course and tee at ${getGolfApiClubName(club)}`;
+  courseLoadStatus.textContent = "Loading courses...";
+  golfApiCourseSelect.innerHTML = "";
+  golfApiTeeSelect.innerHTML = "";
+  confirmCourseLoadBtn.disabled = true;
+
+  try {
+    const courses = await fetchGolfApiClubCourses(club);
+
+    if (courses.length === 0) {
+      courseLoadStatus.textContent = "GOLFAPI did not list any courses for this club.";
+      return;
+    }
+
+    pendingCourseLoad.courses = courses;
+
+    const preferred = chooseGolfApiCourse(courses);
+
+    courses.forEach((course, index) => {
+      const option = document.createElement("option");
+      const holes = Number(course.numHoles || course.NumHoles || 0);
+
+      option.value = String(index);
+      option.textContent = holes
+        ? `${getGolfApiCourseLabel(course, index)} (${holes} holes)`
+        : getGolfApiCourseLabel(course, index);
+      golfApiCourseSelect.appendChild(option);
+    });
+
+    const preferredIndex = courses.indexOf(preferred);
+    golfApiCourseSelect.value = String(preferredIndex >= 0 ? preferredIndex : 0);
+
+    await handleCourseSelectionChange();
+  } catch (error) {
+    console.error("Could not load GOLFAPI courses.", error);
+    courseLoadStatus.textContent = error.userMessage || error.message || "Could not load courses for that club.";
+  }
+}
+
+function closeCourseLoadPanel() {
+  pendingCourseLoad = null;
+
+  if (courseLoadPanel) {
+    courseLoadPanel.classList.add("hidden");
+  }
+}
+
+async function handleCourseSelectionChange() {
+  if (!pendingCourseLoad) {
+    return;
+  }
+
+  const courseRef = pendingCourseLoad.courses[Number(golfApiCourseSelect.value || 0)] || {};
+  const courseId = getGolfApiCourseId(courseRef);
+
+  golfApiTeeSelect.innerHTML = "";
+  confirmCourseLoadBtn.disabled = true;
+  courseLoadStatus.textContent = "Loading tees...";
+
+  if (!courseId) {
+    courseLoadStatus.textContent = "That course has no GOLFAPI course ID, so tees cannot be loaded.";
+    return;
+  }
+
+  try {
+    const bundle = await fetchGolfApiCourseBundle(courseId);
+
+    pendingCourseLoad.course = bundle;
+
+    const tees = bundle.tees;
+
+    if (tees.length === 0) {
+      courseLoadStatus.textContent = "No tees were returned for this course. Loading will still save pars and any mapped targets.";
+      confirmCourseLoadBtn.disabled = false;
+      return;
+    }
+
+    tees.forEach((tee, index) => {
+      const option = document.createElement("option");
+      const totalLength = getGolfApiTeeTotalLength(tee);
+
+      option.value = String(index);
+      option.textContent = totalLength
+        ? `${getGolfApiTeeName(tee)} - ${totalLength} yards`
+        : `${getGolfApiTeeName(tee)} - length unavailable`;
+      golfApiTeeSelect.appendChild(option);
+    });
+
+    const preferredTee = chooseGolfApiTee(tees);
+    const preferredTeeIndex = tees.indexOf(preferredTee);
+    golfApiTeeSelect.value = String(preferredTeeIndex >= 0 ? preferredTeeIndex : 0);
+
+    const coordinateNote = bundle.coordinates.length > 0
+      ? "Mapped green and hazard points are available."
+      : "No mapped coordinates were returned for this course.";
+
+    courseLoadStatus.textContent = `${tees.length} tee${tees.length === 1 ? "" : "s"} available. ${coordinateNote}`;
+    confirmCourseLoadBtn.disabled = false;
+  } catch (error) {
+    console.error("Could not load GOLFAPI tees.", error);
+    courseLoadStatus.textContent = error.userMessage || error.message || "Could not load tees for that course.";
+  }
+}
+
+async function confirmCourseLoadSelection() {
+  if (!pendingCourseLoad || !pendingCourseLoad.course) {
+    return;
+  }
+
+  const bundle = pendingCourseLoad.course;
+  const tee = bundle.tees[Number(golfApiTeeSelect.value || 0)] || {};
+
+  confirmCourseLoadBtn.disabled = true;
+  courseLoadStatus.textContent = "Saving course setup...";
+
+  const courseSetup = buildCourseSetupFromGolfApi(pendingCourseLoad.club, bundle, tee);
   const savedCourses = getSavedCourseSetups();
   const existingIndex = savedCourses.findIndex(savedCourse => {
     return savedCourse.id === courseSetup.id ||
@@ -3489,88 +3742,105 @@ async function loadGolfApiClubAsCourseSetup(club) {
     savedCourseSelect.value = courseSetup.id;
   }
 
-  const yardageText = Object.keys(courseSetup.holeLengths || {}).length > 0
-    ? " Pars and hole lengths were loaded."
-    : " Hole lengths were not available yet.";
+  const lengthCount = Object.keys(courseSetup.holeLengths || {}).length;
+  const yardageText = lengthCount > 0
+    ? ` Hole lengths loaded for the ${courseSetup.teeName} tees.`
+    : " Hole lengths were not available for that tee.";
   const targetCount = Object.keys(courseSetup.holeTargets || {}).length;
   const targetText = targetCount > 0
     ? ` Green GPS targets were loaded for ${targetCount} hole${targetCount === 1 ? "" : "s"}.`
     : " Green GPS targets were not available yet.";
 
+  closeCourseLoadPanel();
   setGolfApiSearchStatus(`${courseSetup.courseName} loaded.${yardageText}${targetText} Add players, then start the round.`);
 }
 
-async function buildCourseSetupFromGolfApiClub(club) {
+function buildCourseSetupFromGolfApi(club, bundle, tee) {
   const clubId = club.clubID || club.clubId || club.id || String(Date.now());
-  const totalHoles = Number(club.numHoles || club.numholes || club.holes || 18) === 9 ? 9 : 18;
-  const details = await fetchGolfApiCourseDetails(club);
-  const course = details.course || {};
-  const tee = details.tee || {};
-  const coordinates = details.coordinates || [];
-  const enrichedTotalHoles = Number(course.numHoles || course.NumHoles || totalHoles) === 9 ? 9 : 18;
+  const course = bundle.course;
+  const courseId = getGolfApiCourseId(course) || "course";
+  const totalHoles = Number(course.numHoles || course.NumHoles || club.numHoles || 18) === 9 ? 9 : 18;
 
   return {
-    id: `golfapi-${clubId}`,
+    id: `golfapi-${clubId}-${courseId}-${tee.teeID || tee.TeeID || tee.teeId || "tee"}`,
     courseName: getGolfApiCourseName(course, club),
-    totalHoles: enrichedTotalHoles,
-    holeTargets: buildHoleTargetsFromGolfApiCoordinates(coordinates, enrichedTotalHoles),
-    holeHazards: buildHoleHazardsFromGolfApiCoordinates(coordinates, enrichedTotalHoles),
-    holePars: buildHoleParsFromGolfApiCourse(course, enrichedTotalHoles),
-    holeLengths: buildHoleLengthsFromGolfApiTee(tee, enrichedTotalHoles),
+    teeName: getGolfApiTeeName(tee),
+    totalHoles: totalHoles,
+    holeTargets: buildHoleTargetsFromGolfApiCoordinates(bundle.coordinates, totalHoles),
+    holeHazards: buildHoleHazardsFromGolfApiCoordinates(bundle.coordinates, totalHoles),
+    holePars: buildHoleParsFromGolfApiCourse(course, totalHoles),
+    holeLengths: buildHoleLengthsFromGolfApiTee(withCourseMeasureUnit(tee, course), totalHoles),
     source: "golfapi",
     golfApi: {
       clubID: clubId,
-      courseID: course.courseID || course.CourseID || course.courseId || null,
+      courseID: getGolfApiCourseId(course) || null,
       teeID: tee.teeID || tee.TeeID || tee.teeId || null,
       latitude: club.latitude || club.Latitude || null,
       longitude: club.longitude || club.Longitude || null,
-      rawClub: club,
-      rawCourse: course,
-      rawTee: tee,
-      coordinateCount: coordinates.length
+      coordinateCount: bundle.coordinates.length
     },
     savedAt: new Date().toISOString()
   };
 }
 
-async function fetchGolfApiCourseDetails(club) {
-  try {
-    const courseRef = chooseGolfApiCourse(club.courses || []);
-    let courseId = courseRef.courseID || courseRef.CourseID || courseRef.courseId;
+async function fetchGolfApiClubCourses(club) {
+  const listed = Array.isArray(club.courses) ? club.courses : [];
 
-    if (!courseId) {
-      const clubId = club.clubID || club.clubId || club.id;
-      const clubDetails = clubId ? await fetchGolfApiJson(`clubs/${clubId}`) : {};
-      const detailedCourseRef = chooseGolfApiCourse(clubDetails.courses || []);
-      courseId = detailedCourseRef.courseID || detailedCourseRef.CourseID || detailedCourseRef.courseId;
-    }
-
-    if (!courseId) {
-      return { course: courseRef, tee: {} };
-    }
-
-    const course = await fetchGolfApiJson(`courses/${courseId}`, { measureUnit: "yd" });
-    const tees = Array.isArray(course.tees) ? course.tees : [];
-    const coordinatesResponse = await fetchGolfApiJson(`coordinates/${courseId}`).catch(error => {
-      console.warn("Could not load GOLFAPI coordinates.", error);
-      return {};
-    });
-    const coordinates = Array.isArray(coordinatesResponse.coordinates)
-      ? coordinatesResponse.coordinates
-      : [];
-
-    return {
-      course: course,
-      tee: {
-        ...chooseGolfApiTee(tees),
-        measureUnit: course.measure || course.measureUnit || "yd"
-      },
-      coordinates: coordinates
-    };
-  } catch (error) {
-    console.warn("Could not load GOLFAPI course details.", error);
-    return { course: {}, tee: {}, coordinates: [] };
+  if (listed.length > 0) {
+    return listed;
   }
+
+  const clubId = club.clubID || club.clubId || club.id;
+
+  if (!clubId) {
+    return [];
+  }
+
+  const details = await fetchGolfApiJson(`clubs/${clubId}`);
+
+  return Array.isArray(details.courses) ? details.courses : [];
+}
+
+async function fetchGolfApiCourseBundle(courseId) {
+  const cached = golfApiCourseCache.get(courseId);
+
+  if (cached) {
+    return cached;
+  }
+
+  const course = await fetchGolfApiJson(`courses/${courseId}`, { measureUnit: "yd" });
+  const coordinatesResponse = await fetchGolfApiJson(`coordinates/${courseId}`).catch(error => {
+    console.warn("Could not load GOLFAPI coordinates.", error);
+    return {};
+  });
+  const bundle = {
+    course: course,
+    tees: Array.isArray(course.tees) ? course.tees : [],
+    coordinates: Array.isArray(coordinatesResponse.coordinates) ? coordinatesResponse.coordinates : []
+  };
+
+  golfApiCourseCache.set(courseId, bundle);
+
+  return bundle;
+}
+
+function getGolfApiCourseId(course) {
+  return course.courseID || course.CourseID || course.courseId || "";
+}
+
+function getGolfApiCourseLabel(course, index) {
+  return String(course.courseName || course.CourseName || `Course ${index + 1}`);
+}
+
+function getGolfApiTeeName(tee) {
+  return String(tee.teeName || tee.TeeName || tee.name || "Unnamed tee");
+}
+
+function withCourseMeasureUnit(tee, course) {
+  return {
+    ...tee,
+    measureUnit: tee.MeasureUnit || tee.measureUnit || course.measure || course.measureUnit || "yd"
+  };
 }
 
 async function fetchGolfApiJson(resource, params) {
@@ -3582,30 +3852,16 @@ async function fetchGolfApiJson(resource, params) {
     }
   });
 
-  const response = await fetch(`/api/golfapi/${resource}?${searchParams.toString()}`);
-  const data = await response.json();
+  const query = searchParams.toString();
+  const response = await fetch(`/api/golfapi/${resource}${query ? `?${query}` : ""}`, {
+    headers: withAccessHeaders({})
+  });
 
   if (!response.ok) {
-    throw new Error(data.error || `GOLFAPI ${resource} request failed.`);
+    throw await buildApiError(response, `GOLFAPI ${resource}`);
   }
 
-  return data;
-}
-
-function normalizeGolfApiCollection(data, collectionName) {
-  if (Array.isArray(data)) {
-    return data;
-  }
-
-  if (Array.isArray(data[collectionName])) {
-    return data[collectionName];
-  }
-
-  if (Array.isArray(data.data)) {
-    return data.data;
-  }
-
-  return [];
+  return response.json();
 }
 
 function chooseGolfApiCourse(courses) {
@@ -4379,6 +4635,485 @@ function toggleCommandHelp() {
 
   const isHidden = commandHelpPanel.classList.toggle("hidden");
   toggleCommandHelpBtn.textContent = isHidden ? "Show Voice Commands" : "Hide Voice Commands";
+}
+
+// -------------------------------
+// Server Access Code
+// -------------------------------
+
+function getAppAccessToken() {
+  try {
+    return localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function saveAccessCodeFromSettings() {
+  const value = accessCodeInput.value.trim();
+
+  if (!value) {
+    accessCodeStatus.textContent = "Enter the access code before saving.";
+    return;
+  }
+
+  localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, value);
+  accessCodeInput.value = "";
+  renderAccessCodeSettings();
+  checkServerAccessRequirement();
+}
+
+function clearAccessCode() {
+  localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+  accessCodeInput.value = "";
+  renderAccessCodeSettings();
+}
+
+function renderAccessCodeSettings() {
+  accessCodeStatus.textContent = getAppAccessToken()
+    ? "An access code is saved on this device."
+    : "No access code saved on this device.";
+}
+
+async function checkServerAccessRequirement() {
+  try {
+    const response = await fetch("/api/health");
+    const health = await response.json();
+
+    serverRequiresAccessCode = Boolean(health.accessTokenRequired);
+
+    if (!serverRequiresAccessCode) {
+      accessCodeHint.textContent = "This server does not require an access code right now.";
+      return;
+    }
+
+    accessCodeHint.textContent = getAppAccessToken()
+      ? "This server requires an access code, and one is saved on this device."
+      : "This server requires an access code. Voice and course lookups will not work until you save it here.";
+  } catch {
+    accessCodeHint.textContent = "Could not reach the server to check whether an access code is required.";
+  }
+}
+
+// -------------------------------
+// Personal Club Distances
+// -------------------------------
+
+function getClubProfile() {
+  if (clubProfileCache) {
+    return clubProfileCache;
+  }
+
+  let stored = null;
+
+  try {
+    stored = JSON.parse(localStorage.getItem(CLUB_PROFILE_STORAGE_KEY) || "null");
+  } catch {
+    stored = null;
+  }
+
+  const rawClubs = stored && Array.isArray(stored.clubs) ? stored.clubs : [];
+  const clubs = rawClubs
+    .map(entry => ({
+      club: normalizeClubName(entry.club),
+      carryYards: Number(entry.carryYards)
+    }))
+    .filter(entry => entry.club && isValidCarryDistance(entry.carryYards));
+
+  clubProfileCache = {
+    clubs: clubs.sort((a, b) => b.carryYards - a.carryYards),
+    updatedAt: stored && stored.updatedAt ? stored.updatedAt : null
+  };
+
+  return clubProfileCache;
+}
+
+function saveClubProfile(clubs) {
+  const profile = {
+    clubs: clubs,
+    updatedAt: new Date().toISOString()
+  };
+
+  localStorage.setItem(CLUB_PROFILE_STORAGE_KEY, JSON.stringify(profile));
+  clubProfileCache = null;
+}
+
+function isValidCarryDistance(value) {
+  return Number.isFinite(value) && value >= 20 && value <= 400;
+}
+
+function normalizeClubName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function renderClubProfileEditor() {
+  const profile = getClubProfile();
+
+  clubDistanceList.innerHTML = "";
+
+  const rows = profile.clubs.length > 0
+    ? profile.clubs
+    : DEFAULT_CLUB_DISTANCES.map(entry => ({ club: entry.club, carryYards: "" }));
+
+  rows.forEach(row => {
+    addClubDistanceRow(row);
+  });
+
+  renderClubProfileStatus();
+}
+
+function addClubDistanceRow(row) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "club-distance-row";
+
+  const clubField = document.createElement("input");
+  clubField.type = "text";
+  clubField.className = "club-distance-name";
+  clubField.placeholder = "Club";
+  clubField.value = row.club || "";
+
+  const carryField = document.createElement("input");
+  carryField.type = "number";
+  carryField.className = "club-distance-yards";
+  carryField.min = "20";
+  carryField.max = "400";
+  carryField.placeholder = "Yards";
+  carryField.value = row.carryYards === "" || row.carryYards === undefined ? "" : String(row.carryYards);
+
+  const removeButton = document.createElement("button");
+  removeButton.type = "button";
+  removeButton.className = "icon-button danger";
+  removeButton.textContent = "×";
+  removeButton.setAttribute("aria-label", "Remove club");
+  removeButton.addEventListener("click", function () {
+    wrapper.remove();
+  });
+
+  wrapper.appendChild(clubField);
+  wrapper.appendChild(carryField);
+  wrapper.appendChild(removeButton);
+  clubDistanceList.appendChild(wrapper);
+}
+
+function saveClubProfileFromSettings() {
+  const rows = Array.from(clubDistanceList.querySelectorAll(".club-distance-row"));
+  const clubs = [];
+  let rejected = 0;
+
+  rows.forEach(row => {
+    const club = normalizeClubName(row.querySelector(".club-distance-name").value);
+    const carryText = row.querySelector(".club-distance-yards").value.trim();
+
+    if (carryText === "") {
+      return;
+    }
+
+    const carryYards = Number(carryText);
+
+    if (!club || !isValidCarryDistance(carryYards)) {
+      rejected += 1;
+      return;
+    }
+
+    clubs.push({ club: club, carryYards: Math.round(carryYards) });
+  });
+
+  saveClubProfile(clubs.sort((a, b) => b.carryYards - a.carryYards));
+  renderShotClubOptions();
+  renderClubProfileStatus();
+
+  if (rejected > 0) {
+    clubProfileStatus.textContent += ` ${rejected} row${rejected === 1 ? "" : "s"} skipped: each club needs a name and a carry between 20 and 400 yards.`;
+  }
+}
+
+function clearClubProfile() {
+  localStorage.removeItem(CLUB_PROFILE_STORAGE_KEY);
+  clubProfileCache = null;
+  renderClubProfileEditor();
+  renderShotClubOptions();
+}
+
+function renderClubProfileStatus() {
+  const profile = getClubProfile();
+  const learned = getLearnedClubDistances();
+  const learnedCount = Object.keys(learned).length;
+
+  if (profile.clubs.length === 0) {
+    clubProfileStatus.textContent = learnedCount > 0
+      ? `No saved club distances yet, but ${learnedCount} club${learnedCount === 1 ? " has" : "s have"} learned distances from your shot log.`
+      : "No personal club distances saved yet.";
+    return;
+  }
+
+  const learnedText = learnedCount > 0
+    ? ` ${learnedCount} club${learnedCount === 1 ? " also has" : "s also have"} learned distances from your shot log.`
+    : "";
+
+  clubProfileStatus.textContent = `${profile.clubs.length} club distance${profile.clubs.length === 1 ? "" : "s"} saved.${learnedText}`;
+}
+
+function getEffectiveClubDistances() {
+  const learned = getLearnedClubDistances();
+  const byClub = new Map();
+
+  getClubProfile().clubs.forEach(entry => {
+    byClub.set(entry.club, {
+      club: entry.club,
+      carryYards: entry.carryYards,
+      source: "saved",
+      shots: 0
+    });
+  });
+
+  Object.values(learned).forEach(entry => {
+    byClub.set(entry.club, {
+      club: entry.club,
+      carryYards: entry.carryYards,
+      source: "learned",
+      shots: entry.shots
+    });
+  });
+
+  return Array.from(byClub.values()).sort((a, b) => b.carryYards - a.carryYards);
+}
+
+function chooseClubFromPersonalDistances(distanceYards) {
+  const clubs = getEffectiveClubDistances();
+
+  if (clubs.length === 0) {
+    return null;
+  }
+
+  const enough = clubs.filter(entry => entry.carryYards >= distanceYards);
+  const choice = enough.length > 0 ? enough[enough.length - 1] : clubs[0];
+
+  return choice;
+}
+
+// -------------------------------
+// Shot Log and Learning
+// -------------------------------
+
+function getShotLog() {
+  if (shotLogCache) {
+    return shotLogCache;
+  }
+
+  try {
+    const stored = JSON.parse(localStorage.getItem(SHOT_LOG_STORAGE_KEY) || "[]");
+
+    shotLogCache = Array.isArray(stored) ? stored : [];
+  } catch {
+    shotLogCache = [];
+  }
+
+  return shotLogCache;
+}
+
+function saveShotLog(shots) {
+  const trimmed = shots.slice(-SHOT_LOG_LIMIT);
+
+  localStorage.setItem(SHOT_LOG_STORAGE_KEY, JSON.stringify(trimmed));
+  shotLogCache = trimmed;
+  learnedClubCache = null;
+}
+
+function logShotFromForm() {
+  const club = normalizeClubName(shotClubInput.value);
+  const distanceYards = Math.round(Number(shotDistanceInput.value));
+
+  if (!club) {
+    shotLogStatus.textContent = "Enter the club you hit.";
+    return;
+  }
+
+  if (!Number.isFinite(distanceYards) || distanceYards < 1 || distanceYards > 400) {
+    shotLogStatus.textContent = "Enter the shot distance in yards, between 1 and 400.";
+    return;
+  }
+
+  const shots = getShotLog().slice();
+
+  shots.push({
+    time: new Date().toISOString(),
+    courseName: round.courseName || "",
+    hole: round.currentHole || 1,
+    par: getHolePar(round.currentHole || 1),
+    club: club,
+    distanceYards: distanceYards,
+    result: shotResultInput.value,
+    lie: shotLieInput.value
+  });
+
+  saveShotLog(shots);
+
+  shotDistanceInput.value = "";
+  renderShotLogStatus();
+  renderShotHistorySummary();
+  renderClubProfileStatus();
+  renderShotClubOptions();
+}
+
+async function fillShotDistanceFromGps() {
+  const target = getCurrentHoleTarget();
+
+  if (!target || target.center.lat === null || target.center.lng === null) {
+    shotLogStatus.textContent = "Save a center-green target for this hole before using GPS distance.";
+    return;
+  }
+
+  if (!navigator.geolocation) {
+    shotLogStatus.textContent = "This browser cannot provide GPS distance.";
+    return;
+  }
+
+  shotLogStatus.textContent = "Getting GPS distance...";
+
+  try {
+    const position = await getCurrentPositionForCaddie();
+    const yardages = calculateGreenYardages(position.coords.latitude, position.coords.longitude, target);
+    const distance = yardages.center || yardages.front || yardages.back;
+
+    if (!distance) {
+      shotLogStatus.textContent = "No usable GPS distance for this hole yet.";
+      return;
+    }
+
+    shotDistanceInput.value = String(distance);
+    shotLogStatus.textContent = `GPS distance to the center of the green: ${distance} yards.`;
+  } catch (error) {
+    shotLogStatus.textContent = getLocationErrorMessage(error);
+  }
+}
+
+function getLearnedClubDistances() {
+  if (learnedClubCache) {
+    return learnedClubCache;
+  }
+
+  const byClub = {};
+
+  getShotLog().forEach(shot => {
+    const club = normalizeClubName(shot.club);
+    const distance = Number(shot.distanceYards);
+
+    if (!club || !Number.isFinite(distance) || shot.result !== "good") {
+      return;
+    }
+
+    if (!byClub[club]) {
+      byClub[club] = [];
+    }
+
+    byClub[club].push(distance);
+  });
+
+  learnedClubCache = {};
+
+  Object.entries(byClub).forEach(([club, distances]) => {
+    if (distances.length < MIN_SHOTS_FOR_LEARNED_CLUB) {
+      return;
+    }
+
+    learnedClubCache[club] = {
+      club: club,
+      carryYards: median(distances),
+      shots: distances.length
+    };
+  });
+
+  return learnedClubCache;
+}
+
+function median(values) {
+  const sorted = values.slice().sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+
+  if (sorted.length % 2 === 1) {
+    return Math.round(sorted[middle]);
+  }
+
+  return Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+}
+
+function renderShotLogStatus() {
+  const currentHole = round.currentHole || 1;
+  const shotsThisHole = getShotLog().filter(shot => {
+    return shot.courseName === round.courseName && Number(shot.hole) === Number(currentHole);
+  });
+
+  shotLogStatus.textContent = shotsThisHole.length === 0
+    ? "No shots logged on this hole yet."
+    : shotsThisHole.map(shot => `${shot.club} ${shot.distanceYards}y`).join(", ");
+}
+
+function renderShotHistorySummary() {
+  const shots = getShotLog();
+
+  if (shots.length === 0) {
+    shotHistorySummary.textContent = "No shots logged yet.";
+    return;
+  }
+
+  const learned = getLearnedClubDistances();
+  const learnedRows = Object.values(learned)
+    .sort((a, b) => b.carryYards - a.carryYards)
+    .map(entry => `${entry.club}: ${entry.carryYards} yards from ${entry.shots} shots`);
+
+  shotHistorySummary.textContent = learnedRows.length === 0
+    ? `${shots.length} shot${shots.length === 1 ? "" : "s"} logged. A club needs ${MIN_SHOTS_FOR_LEARNED_CLUB} shots marked "carried as planned" before it is learned.`
+    : `${shots.length} shot${shots.length === 1 ? "" : "s"} logged. Learned: ${learnedRows.join("; ")}.`;
+}
+
+function renderShotClubOptions() {
+  const names = new Set();
+
+  getEffectiveClubDistances().forEach(entry => names.add(entry.club));
+  DEFAULT_CLUB_DISTANCES.forEach(entry => names.add(entry.club));
+
+  shotClubOptions.innerHTML = "";
+
+  names.forEach(name => {
+    const option = document.createElement("option");
+    option.value = name;
+    shotClubOptions.appendChild(option);
+  });
+}
+
+function exportShotLog() {
+  const shots = getShotLog();
+
+  if (shots.length === 0) {
+    shotHistorySummary.textContent = "There are no shots to export yet.";
+    return;
+  }
+
+  const blob = new Blob([JSON.stringify({ shots: shots }, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = `golf-shot-log-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function clearShotLog() {
+  if (!confirm("Clear every logged shot? Learned club distances will be removed.")) {
+    return;
+  }
+
+  localStorage.removeItem(SHOT_LOG_STORAGE_KEY);
+  shotLogCache = null;
+  learnedClubCache = null;
+  renderShotHistorySummary();
+  renderShotLogStatus();
+  renderClubProfileStatus();
 }
 
 // -------------------------------

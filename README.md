@@ -14,12 +14,13 @@ The project began as a manual scorecard prototype. Our work has expanded it into
 - A separate round-setup page for entering course and player information or loading a saved course. Setup and the course library no longer fill the home page.
 - A home button that changes to **See Current Round** when a round is active.
 - Bottom navigation between Home, Scorecard, Yardage, Round, and More.
-- An active-round dashboard showing the course, current hole, par, available hole length, score inputs, and voice caddie.
+- An active-round dashboard showing the course, current hole, par, available hole length, score inputs, a shot log, and the voice caddie.
 - A vertical scorecard intended for phone screens, with totals, scores relative to par, and leader information.
 - Collapsible green-coordinate and hazard editors. The course-save controls remain directly accessible.
 - A conversation-style caddie panel showing user speech, responses, and processing status.
+- A Settings screen with the server access code, the club-distance editor, and shot-history controls.
 
-Some visual controls and settings are prototype placeholders. The decorative hole map is an illustration; it does not render the actual layout of the selected course.
+Some visual controls are prototype placeholders. The decorative hole map is an illustration; it does not render the actual layout of the selected course.
 
 ### Round Management and Scoring
 
@@ -93,7 +94,7 @@ Course loading retrieves available:
 - Front, center, and back green coordinates.
 - Other mapped points that can be represented as hazards or layup targets.
 
-The loading logic prefers an 18-hole course when a club has multiple courses and prefers a playable White tee when available. Otherwise it uses the first applicable course or tee. There is not yet a full course-and-tee selection interface.
+Search returns clubs. Selecting a club opens a course-and-tee picker that lists every course at the club and every tee with its total yardage. An 18-hole course and a playable White tee are preselected when present, but any course and tee can be chosen before loading. The loaded setup records the chosen tee name, and its saved ID includes the club, course, and tee so different tees at the same club are separate setups.
 
 We added separate coordinate retrieval and corrected course-detail parsing after testing Oklahoma City Golf & Country Club (OKCGCC). Missing data remains possible for other courses. When pars are missing, the prototype defaults to par 4; missing lengths are shown as unavailable rather than a fixed example length.
 
@@ -113,22 +114,34 @@ The GOLFAPI CSV samples were used to understand the provider's structure. The ap
 
 GPS calculations run in the frontend. A mapped point is required to calculate its distance. Distances are straight-line estimates based on coordinates, not slope-adjusted playing distances or walking routes.
 
-### Initial Caddie and Club Recommendations
+### Caddie and Club Recommendations
 
-Club questions now have a dedicated `recommend_club` action so they are handled as shot advice. The backend receives the current hole's par, length, green targets, hazards, and any available player club profile.
+Club questions have a dedicated `recommend_club` action so they are handled as shot advice. The backend receives the current hole's par, length, green target, hazards, and the golfer's club distances.
 
-Recommendations can use a spoken distance or, when available, GPS distance to the center of the green. Responses can include a club, target, preferred miss, hazard advice, and reasoning. The frontend has a general club-distance chart as a fallback.
+Recommendations can use a spoken distance or, when available, GPS distance to the center of the green. Responses include a club, target, preferred miss, hazard advice, and reasoning.
 
-Personalization is still early. The app can read a `golfPlayerClubProfile` from local storage, but it does not yet provide a club-distance editor or automatically learn from shot history. It does not currently fetch wind, weather, elevation, lie, or pin location. General club advice should therefore be treated as a starting estimate.
+Club choice is personal when data exists. The app picks the shortest club that still covers the distance from the golfer's own distances, and only falls back to the general chart when no personal data exists. The spoken reason states where the number came from: a saved profile distance or a learned distance from logged shots.
+
+Wind, weather, elevation, lie, and pin location are still not fetched, so advice remains a starting estimate for those conditions.
+
+### Personal Club Distances and Shot Learning
+
+Settings has a club-distance editor. Each row is a club name and a carry distance between 20 and 400 yards; rows left blank are ignored. Saved distances are stored in `golfPlayerClubProfile` and sent to the AI agent as round context.
+
+The Active Round screen has a shot log. Each entry records club, distance, result (carried as planned, short, or long), lie, course, and hole. A club's distance is learned from the median of its shots marked "carried as planned" once it has at least three of them, and a learned distance overrides the manually saved one for that club. Shot history can be exported as JSON or cleared in Settings. The log keeps the most recent 500 shots.
+
+After a club recommendation, the shot-log club and distance fields are prefilled so logging the shot takes one tap.
 
 ### Persistence and Installable Web App
 
 - `golfRound` stores round state in browser local storage.
 - `golfCourseSetups` stores the local course library.
-- `golfPlayerClubProfile` is the optional club-profile context hook.
+- `golfPlayerClubProfile` stores the club-distance editor's values.
+- `golfShotLog` stores logged shots and drives learned club distances.
+- `golfAppAccessToken` stores this device's server access code.
 - A web manifest and icons support adding the app to a phone's home screen.
-- A versioned service worker caches frontend assets and clears older app caches on activation.
-- API requests bypass the service-worker cache.
+- The service worker serves network-first with a cached fallback, so a new deployment is picked up on the next load while cached assets still support offline use.
+- API requests bypass the service worker entirely.
 
 There is no shared database, sign-in, or cross-device sync yet. Data saved on one browser does not automatically appear on another device. Clearing browser storage can remove rounds and courses. Export course setups to retain a separate copy. Cached frontend assets can support some offline use, but OpenAI and live GOLFAPI requests require internet access.
 
@@ -181,7 +194,10 @@ Use a recent Node.js installation with built-in `fetch`, `FormData`, and `Blob` 
    GOLFAPI_BASE_URL=https://golfapi.io/api/v2.3
    PORT=3000
    HOST=0.0.0.0
+   APP_ACCESS_TOKEN=choose_a_long_random_access_code
    ```
+
+   `APP_ACCESS_TOKEN` is the shared access code for the API endpoints. When it is set, the app will not reach OpenAI or GOLFAPI until the same code is saved under **Settings → Server Access** in the browser. Leaving it blank keeps the endpoints open, which is only appropriate for local use on a trusted network. The request ceilings in `.env.example` (`AI_WINDOW_REQUEST_LIMIT`, `AI_DAILY_REQUEST_LIMIT`, `GOLFAPI_WINDOW_REQUEST_LIMIT`, `GOLFAPI_DAILY_REQUEST_LIMIT`) are optional overrides.
 
 4. Start the single app server:
 
@@ -208,7 +224,7 @@ The project has been tested using a Render Node web service connected to GitHub.
 1. Connect the service to this repository and the intended branch, normally `main`.
 2. Set the service root directory to the folder containing `package.json` and `server.mjs`. Leave it blank if those files are at the repository root.
 3. Use `npm install` as the build command and `npm start` as the start command.
-4. Set `OPENAI_API_KEY`, `GOLFAPI_API_KEY`, and any model overrides in Render's environment settings. Keep `HOST=0.0.0.0`; the server reads the port provided by the host.
+4. Set `OPENAI_API_KEY`, `GOLFAPI_API_KEY`, `APP_ACCESS_TOKEN`, and any model or rate-limit overrides in Render's environment settings. Keep `HOST=0.0.0.0`; the server reads the port provided by the host.
 5. Deploy, then open the service's HTTPS URL on the phone and allow microphone/location access when using those features.
 
 Local edits do not change Render. Commit and push them to the connected branch. If automatic deployment is enabled, Render then builds the new commit; otherwise trigger a manual deployment. Check the deployed commit and deployment status in Render before testing.
@@ -221,7 +237,7 @@ Use the phone browser's home-screen installation option where available. An inst
 
 | Endpoint | Behavior |
 | --- | --- |
-| `GET /api/health` | Reports server status, model, and key configuration booleans |
+| `GET /api/health` | Reports server status, model, key configuration booleans, and whether an access code is required |
 | `POST /api/voice-agent` | Accepts transcript, round state, and optional client metadata; returns a structured action |
 | `POST /api/transcribe` | Accepts recorded audio and returns a transcript |
 | `GET /api/golfapi/clubs[/:id]` | Proxies club search or details |
@@ -230,7 +246,15 @@ Use the phone browser's home-screen installation option where available. An inst
 
 Voice-agent JSON bodies are limited to 256 KiB and audio bodies to 12 MiB. OpenAI and GOLFAPI credentials are used by the backend for upstream requests.
 
-Each AI-first voice request can incur OpenAI usage; recorded-audio transcription can incur separate usage. GOLFAPI requests occur during course search/loading, rather than inherently once per spoken hole question. Reusing locally saved targets permits GPS calculations without refetching the course. There is no shared server-side course cache or usage-budget system yet.
+### Access Control and Rate Limits
+
+`/api/voice-agent`, `/api/transcribe`, and the GOLFAPI proxy require the `X-App-Token` header to match `APP_ACCESS_TOKEN` when that variable is set. A missing or wrong code returns `401` with `code: "access_code_required"`, which the app shows as an access-code message rather than a provider error. `/api/health` stays open so the app can report whether a code is needed.
+
+Each client, identified by `X-Forwarded-For` or the socket address, gets a rolling five-minute window limit and a daily limit per endpoint group: 30 per window and 400 per day for the AI endpoints, 60 per window and 600 per day for the GOLFAPI proxy. Exceeding either returns `429` with a `Retry-After` header. Counters live in server memory, so a restart or a second instance resets them.
+
+Successful GOLFAPI responses are cached in server memory, keyed by the full upstream URL: 30 minutes for club searches and 12 hours for course and coordinate data, capped at 120 entries and 1 MiB per entry. Repeating a course load therefore costs no provider quota. The browser also caches each loaded course bundle for the session, so switching between tees or courses does not refetch.
+
+Each AI-first voice request can incur OpenAI usage; recorded-audio transcription can incur separate usage. Reusing locally saved targets permits GPS calculations without refetching the course.
 
 ### Static File Serving
 
@@ -253,7 +277,7 @@ Every other request path returns `404 Not found`, including `.env`, `.env.exampl
 | `.env.example` | Environment-variable template without credentials |
 | `.gitignore` | Excludes local `.env`, dependencies, and selected logs |
 | `manifest.webmanifest` | PWA name, appearance, launch path, and icons |
-| `service-worker.js` | Versioned frontend cache and offline asset handling |
+| `service-worker.js` | Network-first asset caching with offline fallback |
 | `icons/` | App icon assets |
 | `make-icons.html` | Icon-generation helper |
 
@@ -270,11 +294,15 @@ Every other request path returns `404 Not found`, including `.env`, `.env.exampl
 | Hole lengths unavailable or all pars show 4 | Reload the course from GOLFAPI; an old setup may lack details. Check whether the selected course/tee has data. |
 | Asked to save a green target | Reload course coordinates or enter a center target manually. Allow location access for GPS calculations. |
 | Old interface after deployment | Confirm Render deployed the new commit, close/reopen the app, and refresh. If necessary clear site cache, preserving exported course data first. |
-| Club recommendation seems generic | Personal distances and shot history are not yet configured through a supported UI. State the distance and relevant conditions in the request. |
+| Club recommendation seems generic | Add carry distances under **Settings → My Club Distances**, or log at least three shots with a club so its distance is learned. |
+| `401` or an access-code message | Save the server's `APP_ACCESS_TOKEN` value under **Settings → Server Access**. A provider-key failure shows a different message. |
+| `429` or "too many requests" | A per-client window or daily limit was reached. Wait, or raise the limits in the server environment. |
 
 ## Verification and Remaining Work
 
-There is no automated test suite configured in `package.json`. Development checks have included JavaScript syntax checks, Git whitespace checks, local endpoint tests, course-data checks, and manual browser/phone testing. An earlier local test routed "I have 150 yards, what club should I hit?" to `recommend_club`; this is an example check, not a guarantee of every response.
+There is no automated test suite configured in `package.json`. Development checks have included JavaScript syntax checks, Git whitespace checks, local endpoint tests, course-data checks, and manual browser/phone testing.
+
+The access-code, rate-limit, club-distance, shot-learning, and course/tee features were last verified locally against a mock GOLFAPI upstream: wrong or missing codes returned `401` and surfaced an access-code message in the caddie panel; the fifth call past a window limit returned `429`; three 7-iron shots at 158, 162, and 160 yards produced a learned 160-yard carry that overrode the saved 150-yard entry and changed the spoken reason; and selecting the Red tees stored that tee's per-hole lengths. Repeating a course load after a reload made no new upstream requests. These are point checks, not a guarantee for every course or phrase.
 
 Useful checks from the repository root:
 
@@ -287,12 +315,12 @@ git diff --check
 
 Before expanding beyond prototype testing, remaining work includes:
 
-- Personal club-distance setup, shot logging, and history-based recommendations.
-- Better course/tee selection and a real course-map view.
+- A real course-map view. The hole graphic is still an illustration.
 - Wind, lie, elevation, and other contextual inputs for caddie advice.
 - Streaming or Realtime conversation for smoother voice interaction.
-- Accounts, durable storage, cross-device sync, and conversation memory.
-- Endpoint authentication, abuse controls, rate limits, and cost monitoring. `/api/voice-agent`, `/api/transcribe`, and the GOLFAPI proxy are currently open on the deployed URL, so anyone with the URL can spend OpenAI and GOLFAPI quota.
+- Accounts, durable storage, cross-device sync, and conversation memory. Club distances and shot history live only in the browser that recorded them.
+- Per-user credentials and cost monitoring. The current access code is one shared secret with in-memory rate limits, not per-user authentication, and it resets when the server restarts.
+- Voice control for logging shots; shots are logged through the Active Round form today.
 - Production privacy/data handling, broader tests, and native store packaging.
 
-The current app does not collect a centralized dataset of user conversations or learn automatically from a golfer's history. Round context and transcripts are sent to OpenAI when the AI agent is used, and audio is sent for server transcription when that fallback is used. Smart glasses, scheduled autonomous improvements, and email reports were discussed as future possibilities and are not implemented app features.
+The current app does not collect a centralized dataset of user conversations. Club distances and shot history stay in the browser's local storage and are sent to OpenAI only as round context for a voice request. Audio is sent for server transcription when that fallback is used. Smart glasses, scheduled autonomous improvements, and email reports were discussed as future possibilities and are not implemented app features.

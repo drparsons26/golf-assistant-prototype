@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +15,26 @@ const host = process.env.HOST || "0.0.0.0";
 const model = process.env.OPENAI_MODEL || "gpt-5-mini";
 const golfApiBaseUrl = process.env.GOLFAPI_BASE_URL || "https://golfapi.io/api/v2.3";
 const allowedGolfApiResources = new Set(["clubs", "courses", "coordinates"]);
+
+const accessToken = String(process.env.APP_ACCESS_TOKEN || "").trim();
+const rateLimits = {
+  ai: {
+    windowMs: 5 * 60 * 1000,
+    windowLimit: Number(process.env.AI_WINDOW_REQUEST_LIMIT || 30),
+    dailyLimit: Number(process.env.AI_DAILY_REQUEST_LIMIT || 400)
+  },
+  golfapi: {
+    windowMs: 5 * 60 * 1000,
+    windowLimit: Number(process.env.GOLFAPI_WINDOW_REQUEST_LIMIT || 60),
+    dailyLimit: Number(process.env.GOLFAPI_DAILY_REQUEST_LIMIT || 600)
+  }
+};
+const rateLimitBuckets = new Map();
+const dailyCounters = new Map();
+let dailyCounterDay = currentUtcDay();
+const golfApiCache = new Map();
+const GOLFAPI_CACHE_MAX_ENTRIES = 120;
+const GOLFAPI_CACHE_MAX_BYTES = 1024 * 1024;
 
 const publicFiles = new Set([
   "index.html",
@@ -45,22 +66,35 @@ createServer(async (req, res) => {
         ok: true,
         model,
         openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
-        golfApiConfigured: Boolean(process.env.GOLFAPI_API_KEY)
+        golfApiConfigured: Boolean(process.env.GOLFAPI_API_KEY),
+        accessTokenRequired: accessToken !== ""
       });
       return;
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/api/golfapi/")) {
+      if (!allowApiRequest(req, res, "golfapi")) {
+        return;
+      }
+
       await handleGolfApiRequest(url, res);
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/api/voice-agent") {
+      if (!allowApiRequest(req, res, "ai")) {
+        return;
+      }
+
       await handleVoiceAgentRequest(req, res);
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/api/transcribe") {
+      if (!allowApiRequest(req, res, "ai")) {
+        return;
+      }
+
       await handleTranscriptionRequest(req, res);
       return;
     }
@@ -79,7 +113,118 @@ createServer(async (req, res) => {
   console.log(`Golf Assistant running at http://${host}:${port}/`);
   console.log(`On this computer: http://127.0.0.1:${port}/`);
   console.log("On your phone: use this computer's Wi-Fi IPv4 address with the same port.");
+
+  if (accessToken) {
+    console.log("Access control: APP_ACCESS_TOKEN is set. Clients must send a matching access code.");
+  } else {
+    console.warn("Access control: APP_ACCESS_TOKEN is not set. The AI and GOLFAPI endpoints are open to anyone who can reach this server.");
+  }
+
+  console.log(`Rate limits: AI ${rateLimits.ai.windowLimit}/5 min and ${rateLimits.ai.dailyLimit}/day; GOLFAPI ${rateLimits.golfapi.windowLimit}/5 min and ${rateLimits.golfapi.dailyLimit}/day, per client.`);
 });
+
+function allowApiRequest(req, res, limitName) {
+  if (!hasValidAccessToken(req)) {
+    sendJson(res, 401, {
+      code: "access_code_required",
+      error: "This app needs an access code. Open Settings and enter the access code for this server."
+    });
+    return false;
+  }
+
+  const limitResult = checkRateLimit(getClientKey(req), limitName);
+
+  if (!limitResult.allowed) {
+    res.setHeader("Retry-After", String(limitResult.retryAfterSeconds));
+    sendJson(res, 429, {
+      error: limitResult.scope === "day"
+        ? "Daily request limit reached for this server. Try again tomorrow."
+        : "Too many requests in a short time. Wait a moment and ask again."
+    });
+    return false;
+  }
+
+  return true;
+}
+
+function hasValidAccessToken(req) {
+  if (!accessToken) {
+    return true;
+  }
+
+  const provided = String(req.headers["x-app-token"] || "").trim();
+
+  if (provided.length !== accessToken.length) {
+    return false;
+  }
+
+  return timingSafeEqual(Buffer.from(provided), Buffer.from(accessToken));
+}
+
+function getClientKey(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+
+  return forwarded || req.socket.remoteAddress || "unknown";
+}
+
+function checkRateLimit(clientKey, limitName) {
+  const limit = rateLimits[limitName];
+  const now = Date.now();
+  const today = currentUtcDay();
+
+  if (today !== dailyCounterDay) {
+    dailyCounterDay = today;
+    dailyCounters.clear();
+  }
+
+  const dailyKey = `${limitName}:${clientKey}`;
+  const dailyCount = dailyCounters.get(dailyKey) || 0;
+
+  if (dailyCount >= limit.dailyLimit) {
+    return { allowed: false, scope: "day", retryAfterSeconds: 3600 };
+  }
+
+  const windowKey = `${limitName}:${clientKey}`;
+  const timestamps = (rateLimitBuckets.get(windowKey) || []).filter(time => {
+    return now - time < limit.windowMs;
+  });
+
+  if (timestamps.length >= limit.windowLimit) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((limit.windowMs - (now - timestamps[0])) / 1000));
+
+    rateLimitBuckets.set(windowKey, timestamps);
+    return { allowed: false, scope: "window", retryAfterSeconds };
+  }
+
+  timestamps.push(now);
+  rateLimitBuckets.set(windowKey, timestamps);
+  dailyCounters.set(dailyKey, dailyCount + 1);
+  pruneRateLimitBuckets(now);
+
+  return { allowed: true };
+}
+
+function pruneRateLimitBuckets(now) {
+  if (rateLimitBuckets.size < 500) {
+    return;
+  }
+
+  rateLimitBuckets.forEach((timestamps, key) => {
+    const limitName = key.split(":")[0];
+    const windowMs = (rateLimits[limitName] || rateLimits.ai).windowMs;
+    const active = timestamps.filter(time => now - time < windowMs);
+
+    if (active.length === 0) {
+      rateLimitBuckets.delete(key);
+    } else {
+      rateLimitBuckets.set(key, active);
+    }
+  });
+}
+
+function currentUtcDay() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 async function handleVoiceAgentRequest(req, res) {
   if (!process.env.OPENAI_API_KEY) {
@@ -198,6 +343,14 @@ async function handleGolfApiRequest(url, res) {
     }
   });
 
+  const cacheKey = upstreamUrl.toString();
+  const cached = readGolfApiCache(cacheKey);
+
+  if (cached) {
+    sendText(res, 200, cached.body, cached.contentType);
+    return;
+  }
+
   try {
     const response = await fetch(upstreamUrl, {
       headers: {
@@ -224,11 +377,48 @@ async function handleGolfApiRequest(url, res) {
       return;
     }
 
-    sendText(res, 200, bodyText || "{}", response.headers.get("content-type") || "application/json");
+    const contentType = response.headers.get("content-type") || "application/json";
+    const body = bodyText || "{}";
+
+    writeGolfApiCache(cacheKey, resource, body, contentType);
+    sendText(res, 200, body, contentType);
   } catch (error) {
     console.error("GOLFAPI proxy error:", error);
     sendJson(res, 502, { error: "Could not reach GOLFAPI." });
   }
+}
+
+function readGolfApiCache(key) {
+  const entry = golfApiCache.get(key);
+
+  if (!entry) {
+    return null;
+  }
+
+  if (Date.now() > entry.expiresAt) {
+    golfApiCache.delete(key);
+    return null;
+  }
+
+  return entry;
+}
+
+function writeGolfApiCache(key, resource, body, contentType) {
+  if (body.length > GOLFAPI_CACHE_MAX_BYTES) {
+    return;
+  }
+
+  if (golfApiCache.size >= GOLFAPI_CACHE_MAX_ENTRIES) {
+    golfApiCache.delete(golfApiCache.keys().next().value);
+  }
+
+  const ttlMs = resource === "clubs" ? 30 * 60 * 1000 : 12 * 60 * 60 * 1000;
+
+  golfApiCache.set(key, {
+    body: body,
+    contentType: contentType,
+    expiresAt: Date.now() + ttlMs
+  });
 }
 
 async function serveStaticFile(pathname, res) {
@@ -415,8 +605,6 @@ function sanitizeRound(round) {
     totalHoles: Number(round.totalHoles || 18),
     currentHole: Number(round.currentHole || 1),
     scores: round.scores || {},
-    holeTargets: round.holeTargets || {},
-    holeHazards: round.holeHazards || {},
     holePars: round.holePars || {},
     holeLengths: round.holeLengths || {},
     currentHoleContext: round.currentHoleContext || {},
@@ -438,7 +626,8 @@ function buildAgentInstructions() {
     "Use clarify for ambiguous player names, unclear holes, or unclear score values.",
     "Use recommend_club when the user asks what club to hit, what shot to play, how to attack a hole, lay up or go for it, or asks for caddie advice.",
     "For recommend_club, include any explicit distance in payload.distanceYards. If no distance is stated, leave it 0 and the browser will use GPS/course data when possible.",
-    "For recommend_club, give advice like a real caddie: club, target, miss preference, and one clear swing/shot thought. Mention uncertainty when personal club distances, wind, lie, elevation, or pin location are unknown.",
+    "For recommend_club, give advice like a real caddie: club, target, miss preference, and one clear swing/shot thought. Mention uncertainty when wind, lie, elevation, or pin location are unknown.",
+    "When round.playerClubProfile.status is configured, choose payload.recommendedClub from that club list using its carryYards, preferring the shortest club that still covers the distance. Say when a club distance came from the golfer's logged shots. When the profile is not configured, say the call is a general estimate.",
     "Do not answer club recommendation requests with the player's score, total score, or only the raw distance.",
     "Use get_green_yardage only when the user directly asks how far, yardage, or distance to the green. The browser will handle GPS.",
     "Use get_hazard_distance only when the user directly asks distance to a named hazard or target.",

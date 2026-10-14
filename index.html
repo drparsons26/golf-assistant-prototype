@@ -120,6 +120,23 @@
             <button id="golfApiSearchBtn" type="button">Search Courses</button>
             <div id="golfApiSearchStatus" class="course-search-status">Search results will appear here.</div>
             <div id="golfApiSearchResults" class="course-search-results"></div>
+
+            <div id="courseLoadPanel" class="course-load-panel hidden">
+              <h4 id="courseLoadTitle">Choose a course and tee</h4>
+
+              <label for="golfApiCourseSelect">Course</label>
+              <select id="golfApiCourseSelect"></select>
+
+              <label for="golfApiTeeSelect">Tee</label>
+              <select id="golfApiTeeSelect"></select>
+
+              <div class="button-row">
+                <button id="confirmCourseLoadBtn" type="button">Load This Tee</button>
+                <button id="cancelCourseLoadBtn" type="button" class="secondary-button">Cancel</button>
+              </div>
+
+              <div id="courseLoadStatus" class="course-search-status"></div>
+            </div>
           </div>
 
           <select id="savedCourseSelect">
@@ -181,6 +198,50 @@
             <button id="saveParBtn" type="button">Save Par</button>
           </div>
           <div id="parSummary">No par saved yet.</div>
+        </div>
+
+        <div class="app-card shot-log-card">
+          <div class="section-heading">
+            <div>
+              <h3>Log a Shot</h3>
+              <p>Logged shots teach the caddie your real distances.</p>
+            </div>
+          </div>
+          <div class="yardage-grid">
+            <div>
+              <label for="shotClubInput">Club</label>
+              <input id="shotClubInput" type="text" list="shotClubOptions" placeholder="Example: 7 iron" />
+              <datalist id="shotClubOptions"></datalist>
+            </div>
+            <div>
+              <label for="shotDistanceInput">Distance (yards)</label>
+              <input id="shotDistanceInput" type="number" min="1" max="400" placeholder="Example: 150" />
+            </div>
+          </div>
+          <div class="yardage-grid">
+            <div>
+              <label for="shotResultInput">Result</label>
+              <select id="shotResultInput">
+                <option value="good">Carried as planned</option>
+                <option value="short">Came up short</option>
+                <option value="long">Flew it long</option>
+              </select>
+            </div>
+            <div>
+              <label for="shotLieInput">Lie</label>
+              <select id="shotLieInput">
+                <option value="tee">Tee</option>
+                <option value="fairway">Fairway</option>
+                <option value="rough">Rough</option>
+                <option value="sand">Sand</option>
+              </select>
+            </div>
+          </div>
+          <div class="button-row">
+            <button id="useGpsForShotBtn" type="button" class="secondary-button">Use GPS Distance</button>
+            <button id="logShotBtn" type="button">Log Shot</button>
+          </div>
+          <div id="shotLogStatus">No shots logged on this hole yet.</div>
         </div>
 
         <div class="voice-box app-card">
@@ -410,6 +471,39 @@
           <div class="settings-row"><span>Unit Preference</span><strong>Yards</strong></div>
           <div class="settings-row"><span>AI Voice Agent</span><strong>Hybrid</strong></div>
           <div class="settings-row"><span>App Version</span><strong>1.0.0 Prototype</strong></div>
+        </div>
+        <div class="app-card settings-form">
+          <h3>Server Access</h3>
+          <p id="accessCodeHint">Checking whether this server requires an access code...</p>
+          <label for="accessCodeInput">Access Code</label>
+          <input id="accessCodeInput" type="password" autocomplete="off" placeholder="Paste the access code" />
+          <div class="button-row">
+            <button id="saveAccessCodeBtn" type="button">Save Access Code</button>
+            <button id="clearAccessCodeBtn" type="button" class="danger">Clear</button>
+          </div>
+          <div id="accessCodeStatus">No access code saved on this device.</div>
+        </div>
+
+        <div class="app-card settings-form">
+          <h3>My Club Distances</h3>
+          <p>Enter your normal carry distance for each club. The caddie uses these before any general chart.</p>
+          <div id="clubDistanceList" class="club-distance-list"></div>
+          <div class="button-row">
+            <button id="addClubRowBtn" type="button" class="secondary-button">Add Club</button>
+            <button id="saveClubProfileBtn" type="button">Save Club Distances</button>
+            <button id="clearClubProfileBtn" type="button" class="danger">Clear</button>
+          </div>
+          <div id="clubProfileStatus">No personal club distances saved yet.</div>
+        </div>
+
+        <div class="app-card settings-form">
+          <h3>Shot History</h3>
+          <p>The caddie learns a club's real carry once it has at least three logged shots.</p>
+          <div id="shotHistorySummary">No shots logged yet.</div>
+          <div class="button-row">
+            <button id="exportShotLogBtn" type="button" class="secondary-button">Export Shots</button>
+            <button id="clearShotLogBtn" type="button" class="danger">Clear Shot History</button>
+          </div>
         </div>
       </section>
     </main>
