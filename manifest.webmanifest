@@ -1,12 +1,12 @@
 {
-  "name": "Golf Assistant Prototype",
+  "name": "Golf Assistant",
   "short_name": "Golf Assist",
-  "description": "A hands-free golf assistant for scorekeeping, yardage, hazards, and voice commands.",
+  "description": "A hands-free golf caddie for scorekeeping, GPS yardage, hazards, and club advice.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f2f5f1",
-  "theme_color": "#236b35",
+  "background_color": "#f3f6f2",
+  "theme_color": "#0d5c38",
   "orientation": "portrait",
   "icons": [
     {

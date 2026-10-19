@@ -2,419 +2,419 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Golf Assistant Prototype</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Golf Assistant</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="manifest" href="manifest.webmanifest" />
-  <meta name="theme-color" content="#0e5a2a" />
+  <meta name="theme-color" content="#f6f8f5" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0c1512" media="(prefers-color-scheme: dark)" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Golf Assist" />
 </head>
 <body>
-  <div class="app">
-    <header class="app-header">
-      <div class="brand-lockup">
-        <div class="brand-mark" aria-hidden="true">
-          <span class="brand-flag"></span>
-          <span class="brand-glasses"></span>
-        </div>
-        <div>
-          <h1>Golf Assistant</h1>
-          <p>Smart rounds, simple scoring.</p>
-        </div>
+  <svg class="icon-defs" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-flag" viewBox="0 0 24 24"><path d="M6 21V4m0 0h10.5l-1.8 3.4a1 1 0 0 0 0 .9L16.5 12H6" /></symbol>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-5h-6v5H5a1 1 0 0 1-1-1z" /></symbol>
+      <symbol id="i-card" viewBox="0 0 24 24"><rect x="4" y="3.5" width="16" height="17" rx="2.5" /><path d="M8 8h8M8 12h8M8 16h5" /></symbol>
+      <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3.4" /><path d="M12 1.8v3.4M12 18.8v3.4M1.8 12h3.4M18.8 12h3.4" /></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M10.4 9.2 15 12l-4.6 2.8z" /></symbol>
+      <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="18.5" cy="12" r="1.4" /></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" /><path d="M19.4 14.4a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1v.3a2 2 0 1 1-4 0v-.2a1.6 1.6 0 0 0-2.8-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7h-.3a2 2 0 1 1 0-4h.2a1.6 1.6 0 0 0 1.1-2.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1v-.3a2 2 0 1 1 4 0v.2a1.6 1.6 0 0 0 2.8 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7h.3a2 2 0 1 1 0 4h-.2a1.6 1.6 0 0 0-1.4 1z" /></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" /></symbol>
+      <symbol id="i-chev-left" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5" /></symbol>
+      <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5" /></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s6.5-6.1 6.5-10.5a6.5 6.5 0 1 0-13 0C5.5 14.9 12 21 12 21z" /><circle cx="12" cy="10.5" r="2.4" /></symbol>
+      <symbol id="i-bag" viewBox="0 0 24 24"><path d="M7 8h10l1 12H6zM9.5 8V5a2.5 2.5 0 0 1 5 0v3" /></symbol>
+    </defs>
+  </svg>
+
+  <div class="app-shell">
+    <header class="app-bar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><svg><use href="#i-flag" /></svg></span>
+        <span class="brand-text">
+          <strong>Golf Assistant</strong>
+          <small id="appBarSubtitle">Your pocket caddie</small>
+        </span>
       </div>
-      <button class="icon-button" type="button" aria-label="Notifications">⌕</button>
+      <button class="icon-btn" type="button" data-nav-target="settingsSection" aria-label="Settings">
+        <svg aria-hidden="true"><use href="#i-gear" /></svg>
+      </button>
     </header>
 
     <main class="app-main">
-      <section id="setupSection" class="screen home-screen">
-        <div class="hero-panel">
-          <div class="hero-course" aria-hidden="true">
-            <div class="hero-green"></div>
+      <!-- ============ HOME ============ -->
+      <section id="setupSection" class="screen">
+        <div class="hero">
+          <div class="hero-glow" aria-hidden="true"></div>
+          <p class="eyebrow">Welcome back</p>
+          <h1 class="hero-title">Let's play smarter today.</h1>
+          <p id="homeRoundSummary" class="hero-status">No round in progress.</p>
+          <button id="homeStartRoundBtn" class="btn btn-primary btn-block btn-lg" type="button" data-nav-target="startSetup">
+            <span aria-hidden="true">▶</span><strong>Start Round</strong>
+          </button>
+        </div>
+
+        <div class="stat-strip" role="group" aria-label="Your data">
+          <div class="stat">
+            <strong id="homeCourseCount">0</strong>
+            <span>Courses saved</span>
           </div>
-          <div class="hero-copy">
-            <p>Welcome back, Golfer!</p>
-            <strong>Let’s play smarter today.</strong>
+          <div class="stat">
+            <strong id="homeShotCount">0</strong>
+            <span>Shots logged</span>
+          </div>
+          <div class="stat">
+            <strong id="homeClubCount">0</strong>
+            <span>Clubs learned</span>
           </div>
         </div>
 
-        <button id="homeStartRoundBtn" class="home-start-button" type="button" data-nav-target="startSetup">
-          <span aria-hidden="true">▶</span>
-          <strong>Start Round</strong>
-        </button>
-
-        <div class="home-actions">
-          <button type="button" class="feature-tile" data-nav-target="startSetup">
-            <span>▥</span>
-            <strong>Course Library</strong>
-          </button>
-          <button type="button" class="feature-tile" data-nav-target="yardage">
-            <span>⚑</span>
-            <strong>Yardage</strong>
-          </button>
-          <button type="button" class="feature-tile" data-nav-target="scorecard">
-            <span>▦</span>
-            <strong>Scorecard</strong>
-          </button>
-          <button type="button" class="feature-tile" data-nav-target="round">
-            <span>●</span>
+        <h2 class="section-label">Quick access</h2>
+        <div class="tile-grid">
+          <button class="tile" type="button" data-nav-target="round">
+            <span class="tile-icon accent"><svg aria-hidden="true"><use href="#i-play" /></svg></span>
             <strong>Active Round</strong>
+            <small>Scores, yardage, caddie</small>
           </button>
-          <button type="button" class="feature-tile wide-tile" data-nav-target="settingsSection">
-            <span>⚙</span>
-            <strong>Settings</strong>
+          <button class="tile" type="button" data-nav-target="yardage">
+            <span class="tile-icon"><svg aria-hidden="true"><use href="#i-target" /></svg></span>
+            <strong>Yardage</strong>
+            <small>GPS to the green</small>
+          </button>
+          <button class="tile" type="button" data-nav-target="scorecard">
+            <span class="tile-icon"><svg aria-hidden="true"><use href="#i-card" /></svg></span>
+            <strong>Scorecard</strong>
+            <small>Totals and leader</small>
+          </button>
+          <button class="tile" type="button" data-nav-target="course-library-panel">
+            <span class="tile-icon"><svg aria-hidden="true"><use href="#i-pin" /></svg></span>
+            <strong>Courses</strong>
+            <small>Search and load</small>
           </button>
         </div>
       </section>
 
-      <section id="startSetupSection" class="screen start-setup-screen hidden">
-        <div class="page-title-bar">
-          <button class="icon-button" type="button" data-nav-target="home" aria-label="Back home">‹</button>
+      <!-- ============ ROUND SETUP ============ -->
+      <section id="startSetupSection" class="screen hidden">
+        <div class="page-head">
+          <button class="icon-btn" type="button" data-nav-target="home" aria-label="Back to home">
+            <svg aria-hidden="true"><use href="#i-chev-left" /></svg>
+          </button>
           <div>
-            <h2>Start Round</h2>
-            <p>Set up a new round or load a saved course.</p>
+            <h2>Start a round</h2>
+            <p>Set the course, the players, and the tee.</p>
           </div>
-          <span></span>
         </div>
 
-        <div class="quick-start-card">
-          <h2>Start Round</h2>
+        <div class="card">
+          <label class="field">
+            <span class="field-label">Course name</span>
+            <input id="courseName" type="text" placeholder="Example: Belmar Golf Club" autocomplete="off" />
+          </label>
 
-          <label for="courseName">Course Name</label>
-          <input id="courseName" type="text" placeholder="Example: Test Course" />
+          <label class="field">
+            <span class="field-label">Players</span>
+            <textarea id="playerNames" rows="2" placeholder="Separate names with commas: Drake, John, Josh"></textarea>
+          </label>
 
-          <label for="playerNames">Players</label>
-          <textarea id="playerNames" placeholder="Enter names separated by commas. Example: Drake, John, Josh"></textarea>
+          <label class="field">
+            <span class="field-label">Holes</span>
+            <select id="totalHoles">
+              <option value="9">9 holes</option>
+              <option value="18" selected>18 holes</option>
+            </select>
+          </label>
 
-          <label for="totalHoles">Number of Holes</label>
-          <select id="totalHoles">
-            <option value="9">9 Holes</option>
-            <option value="18" selected>18 Holes</option>
-          </select>
-
-          <button id="startRoundBtn" type="button">▶ Start Round</button>
+          <button id="startRoundBtn" class="btn btn-primary btn-block btn-lg" type="button">Start Round</button>
         </div>
 
-        <div class="voice-box app-card pre-round-voice-card">
-          <h3>Voice Caddie</h3>
-          <p>Start hands-free. Try “Start a round at Prairie Pines with Alex and Sam.”</p>
-
-          <button id="preRoundVoiceBtn" type="button">🎙 Start Listening</button>
-          <div id="preRoundVoiceStatus">Voice ready.</div>
-        </div>
-
-        <div id="course-library-panel" class="saved-course-box app-card">
-          <div class="section-heading">
+        <div class="card voice-card">
+          <div class="card-head">
+            <span class="card-icon"><svg aria-hidden="true"><use href="#i-mic" /></svg></span>
             <div>
-              <h3>Course Library</h3>
-              <p>Load a mapped course, then start a new round with those saved targets.</p>
+              <h3>Start hands-free</h3>
+              <p>“Start a round at Prairie Pines with Alex and Sam.”</p>
+            </div>
+          </div>
+          <button id="preRoundVoiceBtn" class="btn btn-outline btn-block" type="button">Hold a conversation</button>
+          <p id="preRoundVoiceStatus" class="status-line">Voice ready.</p>
+        </div>
+
+        <div id="course-library-panel" class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg aria-hidden="true"><use href="#i-pin" /></svg></span>
+            <div>
+              <h3>Course library</h3>
+              <p>Load mapped pars, tee lengths, and green targets.</p>
             </div>
           </div>
 
-          <div class="golfapi-search-box">
-            <label for="golfApiSearchInput">Find Course with GOLFAPI</label>
-            <div class="course-search-row">
-              <input id="golfApiSearchInput" type="search" placeholder="City or course name" />
-              <input id="golfApiCountryInput" type="text" value="usa" aria-label="Country" />
-            </div>
-            <button id="golfApiSearchBtn" type="button">Search Courses</button>
-            <div id="golfApiSearchStatus" class="course-search-status">Search results will appear here.</div>
-            <div id="golfApiSearchResults" class="course-search-results"></div>
+          <div class="search-row">
+            <span class="search-icon" aria-hidden="true"><svg><use href="#i-search" /></svg></span>
+            <input id="golfApiSearchInput" type="search" placeholder="City or course name" />
+            <input id="golfApiCountryInput" type="text" value="usa" aria-label="Country" class="country-input" />
+          </div>
+          <button id="golfApiSearchBtn" class="btn btn-secondary btn-block" type="button">Search courses</button>
+          <p id="golfApiSearchStatus" class="status-line">Search results will appear here.</p>
+          <div id="golfApiSearchResults" class="result-list"></div>
 
-            <div id="courseLoadPanel" class="course-load-panel hidden">
-              <h4 id="courseLoadTitle">Choose a course and tee</h4>
-
-              <label for="golfApiCourseSelect">Course</label>
+          <div id="courseLoadPanel" class="subpanel hidden">
+            <h4 id="courseLoadTitle">Choose a course and tee</h4>
+            <label class="field">
+              <span class="field-label">Course</span>
               <select id="golfApiCourseSelect"></select>
-
-              <label for="golfApiTeeSelect">Tee</label>
+            </label>
+            <label class="field">
+              <span class="field-label">Tee</span>
               <select id="golfApiTeeSelect"></select>
-
-              <div class="button-row">
-                <button id="confirmCourseLoadBtn" type="button">Load This Tee</button>
-                <button id="cancelCourseLoadBtn" type="button" class="secondary-button">Cancel</button>
-              </div>
-
-              <div id="courseLoadStatus" class="course-search-status"></div>
+            </label>
+            <div class="btn-row">
+              <button id="confirmCourseLoadBtn" class="btn btn-primary" type="button">Load this tee</button>
+              <button id="cancelCourseLoadBtn" class="btn btn-ghost" type="button">Cancel</button>
             </div>
+            <p id="courseLoadStatus" class="status-line"></p>
           </div>
 
-          <select id="savedCourseSelect">
-            <option value="">No saved course selected</option>
-          </select>
+          <div class="divider"></div>
 
-          <div class="button-row">
-            <button id="loadCourseSetupBtn" type="button">Load</button>
-            <button id="importCourseDataBtn" type="button">Import</button>
-            <button id="exportCourseDataBtn" type="button">Export</button>
+          <label class="field">
+            <span class="field-label">Saved courses</span>
+            <select id="savedCourseSelect">
+              <option value="">No saved course selected</option>
+            </select>
+          </label>
+          <div class="btn-row">
+            <button id="loadCourseSetupBtn" class="btn btn-secondary" type="button">Load</button>
+            <button id="importCourseDataBtn" class="btn btn-ghost" type="button">Import</button>
+            <button id="exportCourseDataBtn" class="btn btn-ghost" type="button">Export</button>
           </div>
-
           <input id="courseDataFileInput" class="hidden" type="file" accept=".json,application/json" />
         </div>
       </section>
 
-      <section id="roundSection" class="screen round-screen hidden">
-        <div class="round-hero">
-          <div class="round-top">
-            <button class="icon-button nav-home" type="button" data-nav-target="home" aria-label="Back to home">‹</button>
-            <div>
-              <h2 id="courseTitle">Course</h2>
-              <p>Championship Course</p>
+      <!-- ============ ACTIVE ROUND ============ -->
+      <section id="roundSection" class="screen hidden">
+        <div class="hole-bar">
+          <button id="previousHoleBtn" class="hole-step" type="button" aria-label="Previous hole">
+            <svg aria-hidden="true"><use href="#i-chev-left" /></svg>
+          </button>
+          <div class="hole-bar-center">
+            <h2 id="holeTitle">Hole 1</h2>
+            <div class="hole-meta">
+              <span class="chip chip-par">Par <strong id="roundParSummary">4</strong></span>
+              <span class="chip" id="roundLengthSummary">Yardage not loaded</span>
             </div>
-            <button id="resetRoundBtn" class="icon-button danger" type="button" aria-label="Reset round">⋯</button>
           </div>
+          <button id="nextHoleBtn" class="hole-step" type="button" aria-label="Next hole">
+            <svg aria-hidden="true"><use href="#i-chev-right" /></svg>
+          </button>
+        </div>
 
-          <div class="round-summary-grid">
-            <div>
-              <span>Hole</span>
-              <strong id="holeTitle">Hole 1</strong>
-            </div>
-            <div class="round-photo" aria-hidden="true"></div>
-            <div>
-              <span>Par</span>
-              <strong id="roundParSummary">4</strong>
-              <small id="roundLengthSummary">Yardage not loaded</small>
-            </div>
+        <div class="course-line">
+          <h3 id="courseTitle">Course</h3>
+          <button id="resetRoundBtn" class="text-btn danger" type="button">Reset</button>
+        </div>
+
+        <div class="card distance-card">
+          <div class="distance-main">
+            <span class="distance-label">To center</span>
+            <strong id="roundYardageValue" class="distance-value">—</strong>
+            <span class="distance-unit">yards</span>
+          </div>
+          <div class="distance-side">
+            <div><span>Front</span><strong id="roundYardFront">—</strong></div>
+            <div><span>Back</span><strong id="roundYardBack">—</strong></div>
+            <button id="roundYardageBtn" class="btn btn-secondary btn-sm" type="button">Update GPS</button>
           </div>
         </div>
 
-        <div class="app-card score-summary-card">
-          <div class="section-heading">
+        <div class="card">
+          <div class="card-head">
             <div>
-              <h3>Score Summary</h3>
-              <p>Tap a score field or speak naturally.</p>
+              <h3>Scores</h3>
+              <p>Tap the steppers or just tell the caddie.</p>
             </div>
           </div>
-          <div id="scoreInputs"></div>
+          <div id="scoreInputs" class="score-list"></div>
+          <button id="saveScoresBtn" class="btn btn-primary btn-block" type="button">Save scores</button>
+          <p id="message" class="status-line"></p>
         </div>
 
-        <div class="par-box app-card">
-          <h3>Hole Par</h3>
-          <div class="par-row">
+        <div class="card caddie-card">
+          <div class="card-head">
+            <span class="card-icon accent"><svg aria-hidden="true"><use href="#i-flag" /></svg></span>
             <div>
-              <label for="holeParInput">Par for Current Hole</label>
-              <input id="holeParInput" type="number" min="3" max="6" value="4" />
+              <h3>Voice caddie</h3>
+              <p>Ask naturally. Club advice, yardages, scores.</p>
             </div>
-            <button id="saveParBtn" type="button">Save Par</button>
           </div>
-          <div id="parSummary">No par saved yet.</div>
+
+          <div id="caddieConversation" class="conversation" aria-live="polite">
+            <div class="bubble bubble-caddie">Ready when you are. Talk to me like a real caddie.</div>
+          </div>
+
+          <p id="voiceStatus" class="status-line">Voice ready.</p>
+          <p id="transcriptText" class="transcript"></p>
+
+          <div class="btn-row">
+            <button id="enableAudioBtn" class="btn btn-ghost btn-sm" type="button">Enable voice replies</button>
+            <button id="toggleCommandHelpBtn" class="btn btn-ghost btn-sm" type="button">Examples</button>
+          </div>
+          <p id="audioStatus" class="status-line">Voice responses not enabled yet.</p>
+
+          <div id="commandHelpPanel" class="help-grid hidden">
+            <div><h5>Scoring</h5><p>“I had par and Sam had bogey.”</p></div>
+            <div><h5>Fixes</h5><p>“Change Sam on hole one to six.”</p></div>
+            <div><h5>Caddie</h5><p>“I have 150 yards, what should I hit?”</p></div>
+            <div><h5>Yardage</h5><p>“How far to the green?”</p></div>
+            <div><h5>Navigation</h5><p>“Go to hole five.”</p></div>
+            <div><h5>Status</h5><p>“Who is winning?”</p></div>
+          </div>
         </div>
 
-        <div class="app-card shot-log-card">
-          <div class="section-heading">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg aria-hidden="true"><use href="#i-bag" /></svg></span>
             <div>
-              <h3>Log a Shot</h3>
-              <p>Logged shots teach the caddie your real distances.</p>
+              <h3>Log a shot</h3>
+              <p>Three logged shots teach the caddie a club.</p>
             </div>
           </div>
-          <div class="yardage-grid">
-            <div>
-              <label for="shotClubInput">Club</label>
-              <input id="shotClubInput" type="text" list="shotClubOptions" placeholder="Example: 7 iron" />
+          <div class="field-grid">
+            <label class="field">
+              <span class="field-label">Club</span>
+              <input id="shotClubInput" type="text" list="shotClubOptions" placeholder="7 iron" autocomplete="off" />
               <datalist id="shotClubOptions"></datalist>
-            </div>
-            <div>
-              <label for="shotDistanceInput">Distance (yards)</label>
-              <input id="shotDistanceInput" type="number" min="1" max="400" placeholder="Example: 150" />
-            </div>
-          </div>
-          <div class="yardage-grid">
-            <div>
-              <label for="shotResultInput">Result</label>
+            </label>
+            <label class="field">
+              <span class="field-label">Distance</span>
+              <input id="shotDistanceInput" type="number" min="1" max="400" inputmode="numeric" placeholder="150" />
+            </label>
+            <label class="field">
+              <span class="field-label">Result</span>
               <select id="shotResultInput">
-                <option value="good">Carried as planned</option>
+                <option value="good">As planned</option>
                 <option value="short">Came up short</option>
                 <option value="long">Flew it long</option>
               </select>
-            </div>
-            <div>
-              <label for="shotLieInput">Lie</label>
+            </label>
+            <label class="field">
+              <span class="field-label">Lie</span>
               <select id="shotLieInput">
                 <option value="tee">Tee</option>
                 <option value="fairway">Fairway</option>
                 <option value="rough">Rough</option>
                 <option value="sand">Sand</option>
               </select>
-            </div>
+            </label>
           </div>
-          <div class="button-row">
-            <button id="useGpsForShotBtn" type="button" class="secondary-button">Use GPS Distance</button>
-            <button id="logShotBtn" type="button">Log Shot</button>
+          <div class="btn-row">
+            <button id="useGpsForShotBtn" class="btn btn-ghost" type="button">Use GPS distance</button>
+            <button id="logShotBtn" class="btn btn-secondary" type="button">Log shot</button>
           </div>
-          <div id="shotLogStatus">No shots logged on this hole yet.</div>
+          <p id="shotLogStatus" class="status-line">No shots logged on this hole yet.</p>
         </div>
 
-        <div class="voice-box app-card">
-          <div class="caddie-header">
-            <div class="caddie-avatar" aria-hidden="true">⚑</div>
-            <div>
-              <h3>Voice Caddie</h3>
-              <p>Ask naturally. The AI caddie interprets every request, with a backup only if the connection fails.</p>
+        <details class="card sheet">
+          <summary>Hole par</summary>
+          <div class="sheet-body">
+            <div class="inline-field">
+              <label class="field">
+                <span class="field-label">Par for this hole</span>
+                <input id="holeParInput" type="number" min="3" max="6" value="4" inputmode="numeric" />
+              </label>
+              <button id="saveParBtn" class="btn btn-secondary" type="button">Save par</button>
             </div>
-          </div>
-
-          <div id="caddieConversation" class="caddie-conversation" aria-live="polite">
-            <div class="caddie-bubble caddie-bubble-caddie">
-              Ready when you are. Speak naturally, just like you would to a real caddie.
-            </div>
-          </div>
-
-          <button id="voiceBtn" type="button">🎙 Start Listening</button>
-
-          <button id="enableAudioBtn" type="button" class="secondary-button">
-            Enable Voice Responses
-          </button>
-
-          <div id="audioStatus">Voice responses not enabled yet.</div>
-
-          <button id="toggleCommandHelpBtn" type="button" class="secondary-button">
-            Show Voice Commands
-          </button>
-
-          <div id="commandHelpPanel" class="command-help hidden">
-            <div class="command-category">
-              <h5>Score Entry</h5>
-              <p>“John scored 4, Josh scored 3, and I scored 4.”</p>
-              <p>“I had par and Sam had bogey.”</p>
-            </div>
-            <div class="command-category">
-              <h5>Score Questions</h5>
-              <p>“Who is winning?”</p>
-              <p>“How am I doing compared to Sam?”</p>
-            </div>
-            <div class="command-category">
-              <h5>Round Control</h5>
-              <p>“Next hole.”</p>
-              <p>“Go to hole 5.”</p>
-            </div>
-            <div class="command-category">
-              <h5>Yardage</h5>
-              <p>“How far to the green?”</p>
-              <p>“What hazards are ahead?”</p>
-            </div>
-          </div>
-
-          <div id="voiceStatus">Voice ready.</div>
-          <div id="transcriptText"></div>
-        </div>
-
-        <div class="round-nav-actions">
-          <button id="previousHoleBtn" type="button">Previous Hole</button>
-          <button id="saveScoresBtn" type="button">Save Scores</button>
-          <button id="nextHoleBtn" type="button">Next Hole ›</button>
-          <button id="endRoundBtn" type="button" class="danger">End Round</button>
-        </div>
-
-        <div id="message"></div>
-      </section>
-
-      <section id="scorecardSection" class="screen scorecard-screen hidden">
-        <div class="page-title-bar">
-          <button class="icon-button" type="button" data-nav-target="round" aria-label="Back to round">‹</button>
-          <h2>Scorecard</h2>
-          <button class="icon-button" type="button" aria-label="More">⋯</button>
-        </div>
-        <div class="app-card">
-          <div id="leaderText"></div>
-          <div id="scorecardTable" class="scorecard-list"></div>
-        </div>
-      </section>
-
-      <section id="yardageSection" class="screen yardage-screen hidden">
-        <div class="page-title-bar">
-          <button class="icon-button" type="button" data-nav-target="round" aria-label="Back to round">‹</button>
-          <div>
-            <h2>Hole Yardage</h2>
-            <p>Front, center, back, hazards, and layups.</p>
-          </div>
-          <button class="icon-button" type="button" aria-label="Bookmark">▱</button>
-        </div>
-
-        <div class="yardage-layout app-card">
-          <div class="yardage-numbers">
-            <div><span>Back</span><strong>--</strong><small>yards</small></div>
-            <div><span>Center</span><strong>--</strong><small>yards</small></div>
-            <div><span>Front</span><strong>--</strong><small>yards</small></div>
-            <button id="getYardageBtn" type="button">How far to the green?</button>
-          </div>
-          <div class="hole-map" aria-hidden="true">
-            <div class="hole-water"></div>
-            <div class="hole-fairway"></div>
-            <div class="hole-path"></div>
-            <span class="map-pin map-pin-back">--</span>
-            <span class="map-pin map-pin-center">--</span>
-            <span class="map-pin map-pin-front">--</span>
-            <i class="bunker b1"></i>
-            <i class="bunker b2"></i>
-            <i class="bunker b3"></i>
-          </div>
-        </div>
-
-        <details class="yardage-dropdown">
-          <summary>Green Coordinates</summary>
-          <div class="dropdown-content">
-            <div class="target-group">
-              <h3>Front of Green</h3>
-              <div class="yardage-grid">
-                <div>
-                  <label for="frontLat">Front Latitude</label>
-                  <input id="frontLat" type="number" step="any" placeholder="Example: 35.2050" />
-                </div>
-                <div>
-                  <label for="frontLng">Front Longitude</label>
-                  <input id="frontLng" type="number" step="any" placeholder="Example: -97.4450" />
-                </div>
-              </div>
-            </div>
-
-            <div class="target-group">
-              <h3>Center of Green</h3>
-              <div class="yardage-grid">
-                <div>
-                  <label for="centerLat">Center Latitude</label>
-                  <input id="centerLat" type="number" step="any" placeholder="Example: 35.2051" />
-                </div>
-                <div>
-                  <label for="centerLng">Center Longitude</label>
-                  <input id="centerLng" type="number" step="any" placeholder="Example: -97.4451" />
-                </div>
-              </div>
-            </div>
-
-            <div class="target-group">
-              <h3>Back of Green</h3>
-              <div class="yardage-grid">
-                <div>
-                  <label for="backLat">Back Latitude</label>
-                  <input id="backLat" type="number" step="any" placeholder="Example: 35.2052" />
-                </div>
-                <div>
-                  <label for="backLng">Back Longitude</label>
-                  <input id="backLng" type="number" step="any" placeholder="Example: -97.4452" />
-                </div>
-              </div>
-            </div>
-
-            <div class="button-row">
-              <button id="saveTargetBtn" type="button">Save Green Targets</button>
-            </div>
-
-            <div id="yardageResult">No yardage calculated yet.</div>
+            <p id="parSummary" class="status-line">No par saved yet.</p>
           </div>
         </details>
 
-        <details class="yardage-dropdown">
-          <summary>Hazards and Layup Targets</summary>
-          <div class="dropdown-content hazard-section">
-            <p>Add bunkers, water, doglegs, or layup spots for the current hole.</p>
+        <button id="endRoundBtn" class="btn btn-danger btn-block" type="button">End round</button>
 
-            <div class="yardage-grid">
-              <div>
-                <label for="hazardName">Target Name</label>
-                <input id="hazardName" type="text" placeholder="Example: Right bunker" />
-              </div>
-              <div>
-                <label for="hazardType">Target Type</label>
+        <button id="voiceBtn" class="mic-fab" type="button" aria-label="Talk to the caddie">
+          <svg aria-hidden="true"><use href="#i-mic" /></svg>
+        </button>
+      </section>
+
+      <!-- ============ SCORECARD ============ -->
+      <section id="scorecardSection" class="screen hidden">
+        <div class="page-head">
+          <button class="icon-btn" type="button" data-nav-target="round" aria-label="Back to round">
+            <svg aria-hidden="true"><use href="#i-chev-left" /></svg>
+          </button>
+          <div>
+            <h2>Scorecard</h2>
+            <p id="leaderText">No scores entered yet.</p>
+          </div>
+        </div>
+        <div id="scorecardTable" class="scorecard-list"></div>
+      </section>
+
+      <!-- ============ YARDAGE ============ -->
+      <section id="yardageSection" class="screen hidden">
+        <div class="page-head">
+          <button class="icon-btn" type="button" data-nav-target="round" aria-label="Back to round">
+            <svg aria-hidden="true"><use href="#i-chev-left" /></svg>
+          </button>
+          <div>
+            <h2>Yardage</h2>
+            <p>Straight-line GPS to saved targets.</p>
+          </div>
+        </div>
+
+        <div class="card green-card">
+          <div class="green-readout">
+            <div class="green-side">
+              <span>Front</span>
+              <strong id="yardFront">—</strong>
+            </div>
+            <div class="green-center">
+              <span>Center</span>
+              <strong id="yardCenter">—</strong>
+              <small>yards</small>
+            </div>
+            <div class="green-side">
+              <span>Back</span>
+              <strong id="yardBack">—</strong>
+            </div>
+          </div>
+          <button id="getYardageBtn" class="btn btn-primary btn-block btn-lg" type="button">How far to the green?</button>
+          <p id="yardageResult" class="status-line">No yardage calculated yet.</p>
+        </div>
+
+        <details class="card sheet">
+          <summary>Green coordinates</summary>
+          <div class="sheet-body">
+            <h4>Front of green</h4>
+            <div class="field-grid">
+              <label class="field"><span class="field-label">Latitude</span><input id="frontLat" type="number" step="any" placeholder="35.2050" /></label>
+              <label class="field"><span class="field-label">Longitude</span><input id="frontLng" type="number" step="any" placeholder="-97.4450" /></label>
+            </div>
+            <h4>Center of green</h4>
+            <div class="field-grid">
+              <label class="field"><span class="field-label">Latitude</span><input id="centerLat" type="number" step="any" placeholder="35.2051" /></label>
+              <label class="field"><span class="field-label">Longitude</span><input id="centerLng" type="number" step="any" placeholder="-97.4451" /></label>
+            </div>
+            <h4>Back of green</h4>
+            <div class="field-grid">
+              <label class="field"><span class="field-label">Latitude</span><input id="backLat" type="number" step="any" placeholder="35.2052" /></label>
+              <label class="field"><span class="field-label">Longitude</span><input id="backLng" type="number" step="any" placeholder="-97.4452" /></label>
+            </div>
+            <button id="saveTargetBtn" class="btn btn-secondary btn-block" type="button">Save green targets</button>
+          </div>
+        </details>
+
+        <details class="card sheet">
+          <summary>Hazards and layup targets</summary>
+          <div class="sheet-body">
+            <div class="field-grid">
+              <label class="field"><span class="field-label">Name</span><input id="hazardName" type="text" placeholder="Right bunker" /></label>
+              <label class="field">
+                <span class="field-label">Type</span>
                 <select id="hazardType">
                   <option value="bunker">Bunker</option>
                   <option value="water">Water</option>
@@ -423,97 +423,117 @@
                   <option value="tree">Tree</option>
                   <option value="other">Other</option>
                 </select>
-              </div>
+              </label>
+              <label class="field"><span class="field-label">Latitude</span><input id="hazardLat" type="number" step="any" placeholder="35.2055" /></label>
+              <label class="field"><span class="field-label">Longitude</span><input id="hazardLng" type="number" step="any" placeholder="-97.4455" /></label>
             </div>
-
-            <div class="yardage-grid">
-              <div>
-                <label for="hazardLat">Target Latitude</label>
-                <input id="hazardLat" type="number" step="any" placeholder="Example: 35.2055" />
-              </div>
-              <div>
-                <label for="hazardLng">Target Longitude</label>
-                <input id="hazardLng" type="number" step="any" placeholder="Example: -97.4455" />
-              </div>
+            <div class="btn-row">
+              <button id="addHazardBtn" class="btn btn-secondary" type="button">Add target</button>
+              <button id="clearHazardsBtn" class="btn btn-ghost danger" type="button">Clear</button>
             </div>
-
-            <div class="button-row">
-              <button id="addHazardBtn" type="button">Add Target</button>
-              <button id="clearHazardsBtn" type="button" class="danger">Clear Targets</button>
-            </div>
-
-            <div id="hazardList">No hazards or layup targets saved for this hole.</div>
+            <div id="hazardList" class="hazard-list">No hazards or layup targets saved for this hole.</div>
           </div>
         </details>
 
-        <div class="course-save-box app-card">
-          <h3>Course Library</h3>
-          <p>Save this course's green targets, hazards, and layup spots for future rounds.</p>
-          <button id="saveCourseSetupBtn" type="button">Save Current Course Setup</button>
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h3>Course library</h3>
+              <p>Save this course's targets for future rounds.</p>
+            </div>
+          </div>
+          <button id="saveCourseSetupBtn" class="btn btn-secondary btn-block" type="button">Save current course setup</button>
         </div>
       </section>
 
-      <section id="settingsSection" class="screen settings-screen hidden">
-        <div class="page-title-bar">
-          <button class="icon-button" type="button" data-nav-target="home" aria-label="Back home">‹</button>
-          <h2>Settings</h2>
-          <span></span>
-        </div>
-        <div class="profile-card app-card">
-          <div class="avatar">DG</div>
+      <!-- ============ SETTINGS ============ -->
+      <section id="settingsSection" class="screen hidden">
+        <div class="page-head">
+          <button class="icon-btn" type="button" data-nav-target="home" aria-label="Back to home">
+            <svg aria-hidden="true"><use href="#i-chev-left" /></svg>
+          </button>
           <div>
-            <h3>Drake Golfer</h3>
-            <p>Golf Assistant prototype</p>
+            <h2>Settings</h2>
+            <p>Access, clubs, and shot history.</p>
           </div>
-        </div>
-        <div class="settings-list app-card">
-          <div class="settings-row"><span>Voice Responses</span><strong>Enabled in round</strong></div>
-          <div class="settings-row"><span>Unit Preference</span><strong>Yards</strong></div>
-          <div class="settings-row"><span>AI Voice Agent</span><strong>Hybrid</strong></div>
-          <div class="settings-row"><span>App Version</span><strong>1.0.0 Prototype</strong></div>
-        </div>
-        <div class="app-card settings-form">
-          <h3>Server Access</h3>
-          <p id="accessCodeHint">Checking whether this server requires an access code...</p>
-          <label for="accessCodeInput">Access Code</label>
-          <input id="accessCodeInput" type="password" autocomplete="off" placeholder="Paste the access code" />
-          <div class="button-row">
-            <button id="saveAccessCodeBtn" type="button">Save Access Code</button>
-            <button id="clearAccessCodeBtn" type="button" class="danger">Clear</button>
-          </div>
-          <div id="accessCodeStatus">No access code saved on this device.</div>
         </div>
 
-        <div class="app-card settings-form">
-          <h3>My Club Distances</h3>
-          <p>Enter your normal carry distance for each club. The caddie uses these before any general chart.</p>
-          <div id="clubDistanceList" class="club-distance-list"></div>
-          <div class="button-row">
-            <button id="addClubRowBtn" type="button" class="secondary-button">Add Club</button>
-            <button id="saveClubProfileBtn" type="button">Save Club Distances</button>
-            <button id="clearClubProfileBtn" type="button" class="danger">Clear</button>
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg aria-hidden="true"><use href="#i-gear" /></svg></span>
+            <div>
+              <h3>Server access</h3>
+              <p id="accessCodeHint">Checking whether this server requires an access code...</p>
+            </div>
           </div>
-          <div id="clubProfileStatus">No personal club distances saved yet.</div>
+          <label class="field">
+            <span class="field-label">Access code</span>
+            <input id="accessCodeInput" type="password" autocomplete="off" placeholder="Paste the access code" />
+          </label>
+          <div class="btn-row">
+            <button id="saveAccessCodeBtn" class="btn btn-primary" type="button">Save code</button>
+            <button id="clearAccessCodeBtn" class="btn btn-ghost danger" type="button">Clear</button>
+          </div>
+          <p id="accessCodeStatus" class="status-line">No access code saved on this device.</p>
         </div>
 
-        <div class="app-card settings-form">
-          <h3>Shot History</h3>
-          <p>The caddie learns a club's real carry once it has at least three logged shots.</p>
-          <div id="shotHistorySummary">No shots logged yet.</div>
-          <div class="button-row">
-            <button id="exportShotLogBtn" type="button" class="secondary-button">Export Shots</button>
-            <button id="clearShotLogBtn" type="button" class="danger">Clear Shot History</button>
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg aria-hidden="true"><use href="#i-bag" /></svg></span>
+            <div>
+              <h3>My club distances</h3>
+              <p>Your carry numbers beat any general chart.</p>
+            </div>
           </div>
+          <div id="clubDistanceList" class="club-list"></div>
+          <div class="btn-row">
+            <button id="addClubRowBtn" class="btn btn-ghost" type="button">Add club</button>
+            <button id="saveClubProfileBtn" class="btn btn-primary" type="button">Save distances</button>
+            <button id="clearClubProfileBtn" class="btn btn-ghost danger" type="button">Clear</button>
+          </div>
+          <p id="clubProfileStatus" class="status-line">No personal club distances saved yet.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg aria-hidden="true"><use href="#i-target" /></svg></span>
+            <div>
+              <h3>Shot history</h3>
+              <p>A club is learned after three logged shots.</p>
+            </div>
+          </div>
+          <p id="shotHistorySummary" class="status-line">No shots logged yet.</p>
+          <div class="btn-row">
+            <button id="exportShotLogBtn" class="btn btn-ghost" type="button">Export shots</button>
+            <button id="clearShotLogBtn" class="btn btn-ghost danger" type="button">Clear history</button>
+          </div>
+        </div>
+
+        <div class="card info-list">
+          <div class="info-row"><span>Units</span><strong>Yards</strong></div>
+          <div class="info-row"><span>Voice agent</span><strong>AI first, local backup</strong></div>
+          <div class="info-row"><span>Storage</span><strong>This device only</strong></div>
+          <div class="info-row"><span>Version</span><strong>Prototype</strong></div>
         </div>
       </section>
     </main>
 
-    <nav class="bottom-nav" aria-label="Primary navigation">
-      <button type="button" data-nav-target="home" class="active"><span>⌂</span>Home</button>
-      <button type="button" data-nav-target="scorecard"><span>▦</span>Scorecard</button>
-      <button type="button" data-nav-target="yardage"><span>⚑</span>Yardage</button>
-      <button type="button" data-nav-target="round"><span>●</span>Round</button>
-      <button type="button" data-nav-target="settingsSection"><span>⋯</span>More</button>
+    <nav class="tab-bar" aria-label="Primary navigation">
+      <button type="button" data-nav-target="home" class="active">
+        <svg aria-hidden="true"><use href="#i-home" /></svg><span>Home</span>
+      </button>
+      <button type="button" data-nav-target="scorecard">
+        <svg aria-hidden="true"><use href="#i-card" /></svg><span>Scorecard</span>
+      </button>
+      <button type="button" data-nav-target="yardage">
+        <svg aria-hidden="true"><use href="#i-target" /></svg><span>Yardage</span>
+      </button>
+      <button type="button" data-nav-target="round">
+        <svg aria-hidden="true"><use href="#i-play" /></svg><span>Round</span>
+      </button>
+      <button type="button" data-nav-target="settingsSection">
+        <svg aria-hidden="true"><use href="#i-dots" /></svg><span>More</span>
+      </button>
     </nav>
   </div>
 

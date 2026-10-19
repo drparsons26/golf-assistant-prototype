@@ -10,17 +10,20 @@ The project began as a manual scorecard prototype. Our work has expanded it into
 
 ### Mobile Interface and Navigation
 
-- A golf-themed home screen with a primary **Start Round** button and shortcuts to the course library, yardage, scorecard, active round, and settings.
-- A separate round-setup page for entering course and player information or loading a saved course. Setup and the course library no longer fill the home page.
-- A home button that changes to **See Current Round** when a round is active.
-- Bottom navigation between Home, Scorecard, Yardage, Round, and More.
-- An active-round dashboard showing the course, current hole, par, available hole length, score inputs, a shot log, and the voice caddie.
-- A vertical scorecard intended for phone screens, with totals, scores relative to par, and leader information.
-- Collapsible green-coordinate and hazard editors. The course-save controls remain directly accessible.
-- A conversation-style caddie panel showing user speech, responses, and processing status.
-- A Settings screen with the server access code, the club-distance editor, and shot-history controls.
+The interface follows the patterns that leading golf apps (Arccos, Hole19, 18Birdies, Golfshot) have converged on: the number you need is the largest thing on screen, scoring takes one tap per stroke, and every control is thumb-sized.
 
-Some visual controls are prototype placeholders. The decorative hole map is an illustration; it does not render the actual layout of the selected course.
+- A home screen with a status line for any round in progress, a primary **Start Round** button that becomes **See Current Round**, counts of saved courses, logged shots, and learned clubs, and quick-access tiles.
+- A separate round-setup page for course, players, and holes, with the GOLFAPI search and the course-and-tee picker below it.
+- An active-round screen built around the hole: a sticky hole header with previous/next controls, par, and tee length; a large center-green distance with front and back beside it; one score row per player with − and + steppers sized for gloves; the caddie conversation; and a shot log.
+- A floating microphone button that stays reachable while scrolling and turns red while listening.
+- A vertical scorecard with a totals panel and per-hole cards. Scores use the conventional notation: circle for birdie, double circle for eagle or better, square for bogey, double square for double bogey or worse, plain text for par. The current hole is outlined.
+- A yardage screen with front, center, and back read out in large figures, plus collapsible editors for green coordinates and hazards.
+- A Settings screen grouping server access, the club-distance editor, and shot history.
+- Bottom navigation between Home, Scorecard, Yardage, Round, and More.
+
+The interface adapts to the phone's light or dark appearance, respects reduced-motion settings, and keeps controls clear of the home indicator and notch through safe-area insets. GPS figures appear in both the round and yardage screens and reset when the hole changes.
+
+The earlier decorative hole-map graphic has been removed rather than restyled: it suggested a course layout the app does not have. A real mapped hole view remains future work.
 
 ### Round Management and Scoring
 
@@ -309,7 +312,7 @@ Every other request path returns `404 Not found`, including `.env`, `.env.exampl
 | File | Role |
 | --- | --- |
 | `index.html` | Screens, forms, navigation, and app structure |
-| `style.css` | Mobile styling, scorecard layout, and caddie conversation presentation |
+| `style.css` | Design tokens, light/dark themes, and all screen styling |
 | `app.js` | Round state, UI, speech, action validation, GPS, course loading, and local storage |
 | `server.mjs` | Static hosting, environment loading, OpenAI calls, schema, transcription, and GOLFAPI proxy |
 | `package.json` | Project metadata and start/dev scripts |
@@ -356,7 +359,7 @@ git diff --check
 
 Before expanding beyond prototype testing, remaining work includes:
 
-- A real course-map view. The hole graphic is still an illustration.
+- A real mapped hole view. The app shows distances, not course layouts.
 - Wind, lie, elevation, and other contextual inputs for caddie advice.
 - Streaming or Realtime conversation for smoother voice interaction.
 - Accounts, durable storage, cross-device sync, and conversation memory. Club distances and shot history live only in the browser that recorded them.

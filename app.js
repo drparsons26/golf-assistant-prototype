@@ -119,6 +119,13 @@ const golfApiTeeSelect = document.getElementById("golfApiTeeSelect");
 const confirmCourseLoadBtn = document.getElementById("confirmCourseLoadBtn");
 const cancelCourseLoadBtn = document.getElementById("cancelCourseLoadBtn");
 
+const roundYardageBtn = document.getElementById("roundYardageBtn");
+const homeRoundSummary = document.getElementById("homeRoundSummary");
+const homeCourseCount = document.getElementById("homeCourseCount");
+const homeShotCount = document.getElementById("homeShotCount");
+const homeClubCount = document.getElementById("homeClubCount");
+
+let lastYardageHole = null;
 let recognition = null;
 let selectedCourseSetup = null;
 let isHandlingVoiceCommand = false;
@@ -217,6 +224,12 @@ confirmCourseLoadBtn.addEventListener("click", confirmCourseLoadSelection);
 cancelCourseLoadBtn.addEventListener("click", closeCourseLoadPanel);
 golfApiCourseSelect.addEventListener("change", handleCourseSelectionChange);
 
+if (roundYardageBtn) {
+  roundYardageBtn.addEventListener("click", function () {
+    getYardageToGreen(false);
+  });
+}
+
 navButtons.forEach(button => {
   button.addEventListener("click", function () {
     showAppScreen(button.dataset.navTarget);
@@ -234,6 +247,7 @@ window.addEventListener("load", function () {
   renderShotClubOptions();
   renderShotLogStatus();
   checkServerAccessRequirement();
+  renderHomeSummary();
 });
 
 function startRound() {
@@ -287,14 +301,52 @@ function updateRoundEntryButtons() {
       ? '<span aria-hidden="true">●</span><strong>See Current Round</strong>'
       : '<span aria-hidden="true">▶</span><strong>Start Round</strong>';
   }
+
+  renderHomeSummary();
+}
+
+function renderHomeSummary() {
+  if (homeCourseCount) {
+    homeCourseCount.textContent = String(getSavedCourseSetups().length);
+  }
+
+  if (homeShotCount) {
+    homeShotCount.textContent = String(getShotLog().length);
+  }
+
+  if (homeClubCount) {
+    homeClubCount.textContent = String(Object.keys(getLearnedClubDistances()).length);
+  }
+
+  if (!homeRoundSummary) {
+    return;
+  }
+
+  if (round.players.length === 0) {
+    homeRoundSummary.textContent = "No round in progress.";
+    return;
+  }
+
+  const leader = round.players
+    .map(player => ({ name: player, toPar: getPlayerToPar(player) }))
+    .sort((a, b) => a.toPar - b.toPar)[0];
+
+  homeRoundSummary.textContent =
+    `${round.courseName} · Hole ${round.currentHole} of ${round.totalHoles} · ${leader.name} ${formatToPar(leader.toPar)}`;
 }
 
 function setVoiceButtonText(text) {
-  [voiceBtn, preRoundVoiceBtn].forEach(button => {
-    if (button) {
-      button.textContent = text;
-    }
-  });
+  const isIdle = text === "Start Listening";
+
+  if (voiceBtn) {
+    voiceBtn.setAttribute("aria-label", isIdle ? "Talk to the caddie" : text);
+    voiceBtn.classList.toggle("is-active", !isIdle && text !== "Voice Not Supported");
+    voiceBtn.classList.toggle("is-unsupported", text === "Voice Not Supported");
+  }
+
+  if (preRoundVoiceBtn) {
+    preRoundVoiceBtn.textContent = isIdle ? "Hold a conversation" : text;
+  }
 }
 
 function setVoiceButtonsDisabled(isDisabled) {
@@ -319,10 +371,10 @@ function addCaddieBubble(text, type = "caddie", options = {}) {
   }
 
   const bubble = document.createElement("div");
-  bubble.className = `caddie-bubble caddie-bubble-${type}`;
+  bubble.className = `bubble bubble-${type}`;
 
   if (options.thinking) {
-    bubble.classList.add("caddie-bubble-thinking");
+    bubble.classList.add("bubble-thinking");
   }
 
   bubble.textContent = text;
@@ -341,7 +393,7 @@ function updateCaddieBubble(bubble, text, type = "caddie") {
     return addCaddieBubble(text, type);
   }
 
-  bubble.className = `caddie-bubble caddie-bubble-${type}`;
+  bubble.className = `bubble bubble-${type}`;
   bubble.textContent = text;
 
   if (caddieConversation) {
@@ -435,22 +487,52 @@ function renderCurrentHole() {
 
   round.players.forEach((player, index) => {
     const savedScore = round.scores[player][round.currentHole] || "";
+    const par = getHolePar(round.currentHole);
 
     const row = document.createElement("div");
-    row.className = "player-score-row";
+    row.className = "score-row";
 
-    row.innerHTML = `
-      <span>${player}</span>
-      <input 
-        type="number" 
-        min="1" 
-        max="20" 
-        id="score-player-${index}" 
-        value="${savedScore}" 
-        placeholder="Score"
-      />
-    `;
+    const name = document.createElement("span");
+    name.className = "score-name";
+    name.textContent = player;
 
+    const stepper = document.createElement("div");
+    stepper.className = "stepper";
+
+    const minus = document.createElement("button");
+    minus.type = "button";
+    minus.className = "stepper-btn";
+    minus.setAttribute("aria-label", `One less for ${player}`);
+    minus.textContent = "−";
+
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "1";
+    input.max = "20";
+    input.inputMode = "numeric";
+    input.id = `score-player-${index}`;
+    input.value = savedScore;
+    input.placeholder = String(par);
+    input.setAttribute("aria-label", `Score for ${player}`);
+
+    const plus = document.createElement("button");
+    plus.type = "button";
+    plus.className = "stepper-btn";
+    plus.setAttribute("aria-label", `One more for ${player}`);
+    plus.textContent = "+";
+
+    minus.addEventListener("click", function () {
+      stepScoreInput(input, -1, par);
+    });
+    plus.addEventListener("click", function () {
+      stepScoreInput(input, 1, par);
+    });
+
+    stepper.appendChild(minus);
+    stepper.appendChild(input);
+    stepper.appendChild(plus);
+    row.appendChild(name);
+    row.appendChild(stepper);
     scoreInputs.appendChild(row);
   });
 
@@ -459,6 +541,41 @@ function renderCurrentHole() {
   renderHoleTargetInputs();
   renderHoleHazards();
   renderShotLogStatus();
+
+  if (lastYardageHole !== round.currentHole) {
+    lastYardageHole = round.currentHole;
+    clearYardageReadouts();
+  }
+}
+
+function stepScoreInput(input, delta, par) {
+  const current = Number(input.value) || Number(par) || 4;
+  const next = Math.min(20, Math.max(1, current + delta));
+
+  input.value = String(next);
+}
+
+function clearYardageReadouts() {
+  renderYardageReadouts({ front: null, center: null, back: null });
+}
+
+function renderYardageReadouts(yardages) {
+  const text = value => (value ? String(value) : "—");
+
+  [
+    ["yardFront", yardages.front],
+    ["yardCenter", yardages.center],
+    ["yardBack", yardages.back],
+    ["roundYardFront", yardages.front],
+    ["roundYardBack", yardages.back],
+    ["roundYardageValue", yardages.center || yardages.front || yardages.back]
+  ].forEach(([id, value]) => {
+    const element = document.getElementById(id);
+
+    if (element) {
+      element.textContent = text(value);
+    }
+  });
 }
 
 function saveScores() {
@@ -557,7 +674,16 @@ function renderScorecard() {
       const score = round.scores[player][hole] || "";
       const row = document.createElement("div");
       row.className = "scorecard-player-line";
-      row.innerHTML = `<span>${escapeHtml(player)}</span><strong>${score || "—"}</strong>`;
+
+      const name = document.createElement("span");
+      name.textContent = player;
+
+      const chip = document.createElement("strong");
+      chip.className = `score-chip ${getScoreChipClass(score, getHolePar(hole))}`;
+      chip.textContent = score || "—";
+
+      row.appendChild(name);
+      row.appendChild(chip);
       card.appendChild(row);
     });
 
@@ -565,6 +691,32 @@ function renderScorecard() {
   }
 
   renderLeader();
+}
+
+function getScoreChipClass(score, par) {
+  if (!score) {
+    return "is-empty";
+  }
+
+  const diff = Number(score) - Number(par);
+
+  if (diff <= -2) {
+    return "is-eagle";
+  }
+
+  if (diff === -1) {
+    return "is-birdie";
+  }
+
+  if (diff === 0) {
+    return "is-par";
+  }
+
+  if (diff === 1) {
+    return "is-bogey";
+  }
+
+  return "is-double";
 }
 
 function escapeHtml(text) {
@@ -2934,6 +3086,8 @@ function getYardageToGreen(shouldSpeak = false) {
       const resultMessage = buildYardageDisplayMessage(yardages);
       const spokenMessage = buildYardageSpokenMessage(yardages);
 
+      renderYardageReadouts(yardages);
+
       yardageResult.textContent = resultMessage;
       message.textContent = resultMessage;
       setVoiceStatus(resultMessage);
@@ -5066,7 +5220,7 @@ function renderShotHistorySummary() {
     .map(entry => `${entry.club}: ${entry.carryYards} yards from ${entry.shots} shots`);
 
   shotHistorySummary.textContent = learnedRows.length === 0
-    ? `${shots.length} shot${shots.length === 1 ? "" : "s"} logged. A club needs ${MIN_SHOTS_FOR_LEARNED_CLUB} shots marked "carried as planned" before it is learned.`
+    ? `${shots.length} shot${shots.length === 1 ? "" : "s"} logged. A club needs ${MIN_SHOTS_FOR_LEARNED_CLUB} shots marked "as planned" before it is learned.`
     : `${shots.length} shot${shots.length === 1 ? "" : "s"} logged. Learned: ${learnedRows.join("; ")}.`;
 }
 
