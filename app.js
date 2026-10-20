@@ -125,7 +125,32 @@ const homeCourseCount = document.getElementById("homeCourseCount");
 const homeShotCount = document.getElementById("homeShotCount");
 const homeClubCount = document.getElementById("homeClubCount");
 
+const offlineBanner = document.getElementById("offlineBanner");
+const resumeBanner = document.getElementById("resumeBanner");
+const resumeBannerText = document.getElementById("resumeBannerText");
+const resumeRoundBtn = document.getElementById("resumeRoundBtn");
+const discardRoundBtn = document.getElementById("discardRoundBtn");
+const roundHistoryList = document.getElementById("roundHistoryList");
+const exportRoundHistoryBtn = document.getElementById("exportRoundHistoryBtn");
+const clearRoundHistoryBtn = document.getElementById("clearRoundHistoryBtn");
+const deleteCourseSetupBtn = document.getElementById("deleteCourseSetupBtn");
+const managePlayersBtn = document.getElementById("managePlayersBtn");
+const playersSheet = document.getElementById("playersSheet");
+const playerManageList = document.getElementById("playerManageList");
+const addPlayerInput = document.getElementById("addPlayerInput");
+const addPlayerBtn = document.getElementById("addPlayerBtn");
+const playerManageStatus = document.getElementById("playerManageStatus");
+const undoScoreBtn = document.getElementById("undoScoreBtn");
+const shotDirectionInput = document.getElementById("shotDirectionInput");
+const unitPreferenceSelect = document.getElementById("unitPreferenceSelect");
+const toastElement = document.getElementById("toast");
+const confirmOverlay = document.getElementById("confirmOverlay");
+const confirmText = document.getElementById("confirmText");
+const confirmAcceptBtn = document.getElementById("confirmAcceptBtn");
+const confirmCancelBtn = document.getElementById("confirmCancelBtn");
+
 let lastYardageHole = null;
+let loadedRoundSavedAt = 0;
 let recognition = null;
 let selectedCourseSetup = null;
 let isHandlingVoiceCommand = false;
@@ -140,6 +165,19 @@ const SHOT_LOG_LIMIT = 500;
 const ACCESS_TOKEN_STORAGE_KEY = "golfAppAccessToken";
 const CLUB_PROFILE_STORAGE_KEY = "golfPlayerClubProfile";
 const SHOT_LOG_STORAGE_KEY = "golfShotLog";
+const ROUND_HISTORY_STORAGE_KEY = "golfRoundHistory";
+const UNIT_STORAGE_KEY = "golfDistanceUnit";
+const ROUND_HISTORY_LIMIT = 100;
+const STALE_ROUND_MS = 10 * 60 * 60 * 1000;
+const POSITION_MAX_AGE_MS = 12000;
+const WEAK_ACCURACY_METERS = 25;
+let roundHistoryCache = null;
+let lastPosition = null;
+let locationWatchId = null;
+let wakeLock = null;
+let pendingConfirm = null;
+let toastTimer = null;
+let scoreUndoSnapshot = null;
 let pendingCourseLoad = null;
 const golfApiCourseCache = new Map();
 let clubProfileCache = null;
@@ -230,6 +268,42 @@ if (roundYardageBtn) {
   });
 }
 
+deleteCourseSetupBtn.addEventListener("click", deleteSelectedCourseSetup);
+exportRoundHistoryBtn.addEventListener("click", exportRoundHistory);
+clearRoundHistoryBtn.addEventListener("click", clearRoundHistory);
+undoScoreBtn.addEventListener("click", undoLastScoreChange);
+addPlayerBtn.addEventListener("click", addPlayerToRound);
+managePlayersBtn.addEventListener("click", function () {
+  playersSheet.open = !playersSheet.open;
+  renderPlayerManageList();
+
+  if (playersSheet.open) {
+    playersSheet.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+});
+unitPreferenceSelect.addEventListener("change", function () {
+  setUnitPreference(unitPreferenceSelect.value);
+});
+confirmAcceptBtn.addEventListener("click", function () {
+  closeConfirm(true);
+});
+confirmCancelBtn.addEventListener("click", function () {
+  closeConfirm(false);
+});
+confirmOverlay.addEventListener("click", function (event) {
+  if (event.target === confirmOverlay) {
+    closeConfirm(false);
+  }
+});
+resumeRoundBtn.addEventListener("click", function () {
+  hideResumeBanner();
+  showAppScreen("round");
+});
+discardRoundBtn.addEventListener("click", function () {
+  hideResumeBanner();
+  resetRound();
+});
+
 navButtons.forEach(button => {
   button.addEventListener("click", function () {
     showAppScreen(button.dataset.navTarget);
@@ -248,6 +322,22 @@ window.addEventListener("load", function () {
   renderShotLogStatus();
   checkServerAccessRequirement();
   renderHomeSummary();
+  renderRoundHistory();
+  renderUnitPreference();
+  renderConnectionState();
+  maybeShowResumeBanner();
+  syncWakeLock();
+
+  if (round.players.length > 0) {
+    startLocationWatch();
+  }
+});
+
+window.addEventListener("online", renderConnectionState);
+window.addEventListener("offline", renderConnectionState);
+document.addEventListener("visibilitychange", syncWakeLock);
+window.addEventListener("pagehide", function () {
+  saveScoresQuietly();
 });
 
 function startRound() {
@@ -259,7 +349,7 @@ function startRound() {
     .filter(name => name !== "");
 
   if (players.length === 0) {
-    alert("Please enter at least one player.");
+    notify("Please enter at least one player.");
     return;
   }
 
@@ -285,7 +375,11 @@ if (selectedCourseSetup) {
     round.scores[player] = {};
   });
 
+  round.holeStats = {};
+  scoreUndoSnapshot = null;
+  hideResumeBanner();
   saveRoundToStorage();
+  startLocationWatch();
   updateRoundEntryButtons();
   showRoundScreen();
   renderCurrentHole();
@@ -418,6 +512,10 @@ function showAppScreen(target) {
     settingsSection: settingsSection
   };
 
+  if (!roundSection.classList.contains("hidden") && normalizedTarget !== "round") {
+    saveScoresQuietly();
+  }
+
   if (normalizedTarget === "course-library-panel") {
     showAppScreen("startSetup");
     const coursePanel = document.getElementById("course-library-panel");
@@ -451,6 +549,12 @@ function showAppScreen(target) {
     renderAccessCodeSettings();
     renderClubProfileStatus();
     renderShotHistorySummary();
+    renderUnitPreference();
+  }
+
+  if (normalizedTarget === "home") {
+    renderHomeSummary();
+    renderRoundHistory();
   }
 
   Object.values(screens).forEach(screen => {
@@ -488,9 +592,13 @@ function renderCurrentHole() {
   round.players.forEach((player, index) => {
     const savedScore = round.scores[player][round.currentHole] || "";
     const par = getHolePar(round.currentHole);
+    const stats = getHoleStats(player, round.currentHole);
 
     const row = document.createElement("div");
     row.className = "score-row";
+
+    const top = document.createElement("div");
+    top.className = "score-row-top";
 
     const name = document.createElement("span");
     name.className = "score-name";
@@ -527,12 +635,78 @@ function renderCurrentHole() {
     plus.addEventListener("click", function () {
       stepScoreInput(input, 1, par);
     });
+    input.addEventListener("change", function () {
+      saveScoresQuietly();
+    });
 
     stepper.appendChild(minus);
     stepper.appendChild(input);
     stepper.appendChild(plus);
-    row.appendChild(name);
-    row.appendChild(stepper);
+    top.appendChild(name);
+    top.appendChild(stepper);
+
+    const detail = document.createElement("div");
+    detail.className = "score-detail";
+
+    const putts = document.createElement("div");
+    putts.className = "putt-control";
+
+    const puttLabel = document.createElement("span");
+    puttLabel.textContent = "Putts";
+
+    const puttMinus = document.createElement("button");
+    puttMinus.type = "button";
+    puttMinus.className = "mini-btn";
+    puttMinus.textContent = "−";
+    puttMinus.setAttribute("aria-label", `One less putt for ${player}`);
+
+    const puttValue = document.createElement("strong");
+    puttValue.textContent = stats.putts === null ? "—" : String(stats.putts);
+
+    const puttPlus = document.createElement("button");
+    puttPlus.type = "button";
+    puttPlus.className = "mini-btn";
+    puttPlus.textContent = "+";
+    puttPlus.setAttribute("aria-label", `One more putt for ${player}`);
+
+    puttMinus.addEventListener("click", function () {
+      stepPutts(player, -1);
+    });
+    puttPlus.addEventListener("click", function () {
+      stepPutts(player, 1);
+    });
+
+    putts.appendChild(puttLabel);
+    putts.appendChild(puttMinus);
+    putts.appendChild(puttValue);
+    putts.appendChild(puttPlus);
+
+    const fairway = document.createElement("button");
+    fairway.type = "button";
+    fairway.className = `toggle-chip${stats.fairway ? " is-on" : ""}`;
+    fairway.textContent = "Fairway";
+    fairway.setAttribute("aria-pressed", String(Boolean(stats.fairway)));
+    fairway.disabled = par === 3;
+    fairway.title = par === 3 ? "Par 3 holes do not count a fairway" : "";
+    fairway.addEventListener("click", function () {
+      toggleHoleStat(player, "fairway");
+    });
+
+    const green = document.createElement("button");
+    green.type = "button";
+    green.className = `toggle-chip${stats.gir ? " is-on" : ""}`;
+    green.textContent = "GIR";
+    green.setAttribute("aria-pressed", String(Boolean(stats.gir)));
+    green.addEventListener("click", function () {
+      toggleHoleStat(player, "gir");
+    });
+
+    detail.appendChild(putts);
+    detail.appendChild(fairway);
+    detail.appendChild(green);
+
+    row.appendChild(top);
+    row.appendChild(detail);
     scoreInputs.appendChild(row);
   });
 
@@ -541,6 +715,7 @@ function renderCurrentHole() {
   renderHoleTargetInputs();
   renderHoleHazards();
   renderShotLogStatus();
+  renderPlayerManageList();
 
   if (lastYardageHole !== round.currentHole) {
     lastYardageHole = round.currentHole;
@@ -553,6 +728,76 @@ function stepScoreInput(input, delta, par) {
   const next = Math.min(20, Math.max(1, current + delta));
 
   input.value = String(next);
+  buzz();
+  saveScoresQuietly();
+}
+
+function getHoleStats(player, hole) {
+  const forPlayer = (round.holeStats || {})[player] || {};
+  const stats = forPlayer[hole] || {};
+
+  return {
+    putts: Number.isFinite(Number(stats.putts)) && stats.putts !== null ? Number(stats.putts) : null,
+    fairway: Boolean(stats.fairway),
+    gir: Boolean(stats.gir)
+  };
+}
+
+function setHoleStats(player, hole, stats) {
+  if (!round.holeStats) {
+    round.holeStats = {};
+  }
+
+  if (!round.holeStats[player]) {
+    round.holeStats[player] = {};
+  }
+
+  round.holeStats[player][hole] = stats;
+  saveRoundToStorage();
+}
+
+function stepPutts(player, delta) {
+  const stats = getHoleStats(player, round.currentHole);
+  const current = stats.putts === null ? 0 : stats.putts;
+  const next = Math.min(10, Math.max(0, current + delta));
+
+  captureScoreUndo("putts");
+  setHoleStats(player, round.currentHole, { ...stats, putts: next });
+  buzz();
+  renderCurrentHole();
+  renderScorecard();
+}
+
+function toggleHoleStat(player, key) {
+  const stats = getHoleStats(player, round.currentHole);
+
+  captureScoreUndo(key === "gir" ? "green hit" : "fairway");
+  setHoleStats(player, round.currentHole, { ...stats, [key]: !stats[key] });
+  buzz();
+  renderCurrentHole();
+  renderScorecard();
+}
+
+function getPlayerPuttTotal(player) {
+  const forPlayer = (round.holeStats || {})[player] || {};
+
+  return Object.values(forPlayer).reduce((total, stats) => {
+    const putts = Number(stats.putts);
+
+    return Number.isFinite(putts) ? total + putts : total;
+  }, 0);
+}
+
+function getPlayerFairwayCount(player) {
+  const forPlayer = (round.holeStats || {})[player] || {};
+
+  return Object.values(forPlayer).filter(stats => stats.fairway).length;
+}
+
+function getPlayerGreenCount(player) {
+  const forPlayer = (round.holeStats || {})[player] || {};
+
+  return Object.values(forPlayer).filter(stats => stats.gir).length;
 }
 
 function clearYardageReadouts() {
@@ -579,26 +824,59 @@ function renderYardageReadouts(yardages) {
 }
 
 function saveScores() {
+  const result = saveScoresQuietly();
+
+  if (!result.ok) {
+    message.textContent = result.error;
+    notify(result.error);
+    return;
+  }
+
+  message.textContent = `Scores saved for Hole ${round.currentHole}.`;
+}
+
+function saveScoresQuietly() {
+  if (round.players.length === 0) {
+    return { ok: true };
+  }
+
+  const pending = [];
+
   for (let i = 0; i < round.players.length; i++) {
     const player = round.players[i];
     const input = document.getElementById(`score-player-${i}`);
-    const score = Number(input.value);
 
-    if (!input.value) {
+    if (!input || !input.value) {
       continue;
     }
 
-    if (score < 1 || score > 20) {
-      alert(`Please enter a valid score for ${player}.`);
-      return;
+    const score = Number(input.value);
+
+    if (!Number.isInteger(score) || score < 1 || score > 20) {
+      return { ok: false, error: `Enter a score between 1 and 20 for ${player}.` };
     }
 
-    round.scores[player][round.currentHole] = score;
+    pending.push([player, score]);
   }
+
+  const changed = pending.some(([player, score]) => {
+    return round.scores[player][round.currentHole] !== score;
+  });
+
+  if (!changed) {
+    return { ok: true };
+  }
+
+  captureScoreUndo(`hole ${round.currentHole}`);
+
+  pending.forEach(([player, score]) => {
+    round.scores[player][round.currentHole] = score;
+  });
 
   saveRoundToStorage();
   renderScorecard();
-  message.textContent = `Scores saved for Hole ${round.currentHole}.`;
+  renderHomeSummary();
+  return { ok: true };
 }
 
 function nextHole() {
@@ -653,6 +931,11 @@ function renderScorecard() {
     total.className = "scorecard-total-row";
     total.innerHTML = `<span>${escapeHtml(player)}</span><strong>${getPlayerTotal(player)}</strong><em>${formatToPar(toPar)}</em>`;
     totals.appendChild(total);
+
+    const stats = document.createElement("div");
+    stats.className = "scorecard-stat-row";
+    stats.textContent = `${getPlayerPuttTotal(player)} putts · ${getPlayerFairwayCount(player)} fairways · ${getPlayerGreenCount(player)} greens`;
+    totals.appendChild(stats);
   });
 
   scorecardTable.appendChild(totals);
@@ -767,7 +1050,9 @@ function renderLeader() {
 }
 
 function saveRoundToStorage() {
+  round.savedAt = Date.now();
   localStorage.setItem("golfRound", JSON.stringify(round));
+  syncWakeLock();
 }
 
 function loadSavedRound() {
@@ -778,10 +1063,15 @@ function loadSavedRound() {
   }
 
   round = JSON.parse(savedRound);
+  loadedRoundSavedAt = Number(round.savedAt || 0);
 
   if (!round.holePars) {
-  round.holePars = createDefaultPars(round.totalHoles);
-}
+    round.holePars = createDefaultPars(round.totalHoles);
+  }
+
+  if (!round.holeStats) {
+    round.holeStats = {};
+  }
 
 fillMissingPars();
 
@@ -826,12 +1116,19 @@ if (round.targetGreen.lat !== null && round.targetGreen.lng !== null) {
   renderScorecard();
 }
 
-function resetRound() {
-  const confirmed = confirm("Are you sure you want to reset the round?");
+async function resetRound() {
+  const confirmed = await confirmAction(
+    roundHasScores()
+      ? "Reset this round? It will be saved to your round history first."
+      : "Reset this round?",
+    "Reset round"
+  );
 
   if (!confirmed) {
     return;
   }
+
+  archiveCurrentRound();
 
   localStorage.removeItem("golfRound");
 
@@ -1008,7 +1305,7 @@ function canUseAudioRecordingFallback() {
 
 async function toggleAudioRecordingFallback() {
   if (!canUseAudioRecordingFallback()) {
-    alert("Voice recording is not available in this browser. On phones, the app usually needs to be opened with HTTPS for microphone access.");
+    notify("Voice recording is not available in this browser. On phones, the app usually needs to be opened with HTTPS for microphone access.");
     return;
   }
 
@@ -1307,6 +1604,17 @@ function getVoiceRecognitionErrorMessage(error) {
   return "Voice recognition hit a browser error. Check microphone permissions and try again.";
 }
 async function handleVoiceCommand(transcript) {
+  if (!isOnline()) {
+    setVoiceStatus("Offline — using on-device handling.");
+    addCaddieBubble("No connection right now, so I'm using on-device handling for that.", "system");
+
+    if (!tryHandleFastLocalVoiceCommand(transcript)) {
+      handleLegacyVoiceCommand(transcript);
+    }
+
+    return;
+  }
+
   setVoiceStatus("Asking the AI caddie...");
   const thinkingBubble = addCaddieBubble("Asking the AI caddie", "caddie", { thinking: true });
 
@@ -1508,8 +1816,11 @@ function endRoundFromVoice() {
   }
 
   saveScores();
+  archiveCurrentRound();
   renderScorecard();
   saveRoundToStorage();
+  releaseWakeLock();
+  stopLocationWatch();
   showAppScreen("scorecard");
   showFastCaddieMessage(buildFinalRoundMessage(), true);
 }
@@ -2159,18 +2470,20 @@ function buildClubRecommendationMessage(result, distanceYards, distanceSource) {
   const target = result.payload.shotTarget || buildDefaultShotTarget(distanceYards, par);
   const miss = result.payload.missPreference || buildDefaultMissPreference(hazards);
   const reason = buildClubRecommendationReason(result, personalChoice, distanceYards);
+  const tendency = describeClubTendency(club);
   const holeContext = holeLength
-    ? `Hole ${round.currentHole} is a par ${par}, ${holeLength} yards.`
+    ? `Hole ${round.currentHole} is a par ${par}, ${formatDistance(holeLength)}.`
     : `Hole ${round.currentHole} is a par ${par}.`;
 
   prefillShotLogFromRecommendation(club, distanceYards);
 
   return [
-    `${holeContext} From ${distanceYards} yards, I would hit ${club}.`,
+    `${holeContext} From ${formatDistance(distanceYards)}, I would hit ${club}.`,
     `Aim ${target}.`,
     `Best miss: ${miss}.`,
     hazardAdvice,
     reason,
+    tendency,
     distanceSource === "GPS center-green yardage" ? "This is based on center-green GPS yardage." : ""
   ].filter(Boolean).join(" ");
 }
@@ -2975,22 +3288,22 @@ function saveTargetGreen() {
   const backLng = getOptionalCoordinate(backLngInput.value);
 
   if (centerLat === null || centerLng === null) {
-    alert("Please enter at least the center green latitude and longitude.");
+    notify("Please enter at least the center green latitude and longitude.");
     return;
   }
 
   if (!isValidCoordinatePair(centerLat, centerLng)) {
-    alert("Center green coordinates are not valid.");
+    notify("Center green coordinates are not valid.");
     return;
   }
 
   if ((frontLat !== null || frontLng !== null) && !isValidCoordinatePair(frontLat, frontLng)) {
-    alert("Front green coordinates are not valid.");
+    notify("Front green coordinates are not valid.");
     return;
   }
 
   if ((backLat !== null || backLng !== null) && !isValidCoordinatePair(backLat, backLng)) {
-    alert("Back green coordinates are not valid.");
+    notify("Back green coordinates are not valid.");
     return;
   }
 
@@ -3073,28 +3386,20 @@ function getYardageToGreen(shouldSpeak = false) {
     return;
   }
 
+  const cached = getFreshCachedPosition();
+
+  if (cached) {
+    applyYardagePosition(cached, target, shouldSpeak);
+    return;
+  }
+
   yardageResult.textContent = "Getting your location...";
   message.textContent = "Getting your location...";
 
   navigator.geolocation.getCurrentPosition(
     function (position) {
-      const userLat = position.coords.latitude;
-      const userLng = position.coords.longitude;
-
-      const yardages = calculateGreenYardages(userLat, userLng, target);
-
-      const resultMessage = buildYardageDisplayMessage(yardages);
-      const spokenMessage = buildYardageSpokenMessage(yardages);
-
-      renderYardageReadouts(yardages);
-
-      yardageResult.textContent = resultMessage;
-      message.textContent = resultMessage;
-      setVoiceStatus(resultMessage);
-
-      if (shouldSpeak) {
-        speakText(spokenMessage);
-      }
+      lastPosition = position;
+      applyYardagePosition(position, target, shouldSpeak);
     },
     function (error) {
       const errorMessage = getLocationErrorMessage(error);
@@ -3113,6 +3418,32 @@ function getYardageToGreen(shouldSpeak = false) {
       maximumAge: 0
     }
   );
+}
+
+function applyYardagePosition(position, target, shouldSpeak) {
+  const yardages = calculateGreenYardages(
+    position.coords.latitude,
+    position.coords.longitude,
+    target
+  );
+  const accuracy = getAccuracyNote(position);
+  const resultMessage = buildYardageDisplayMessage(yardages);
+  const spokenMessage = buildYardageSpokenMessage(yardages);
+
+  renderYardageReadouts(yardages);
+
+  const displayed = accuracy.text ? `${resultMessage} ${accuracy.text}.` : resultMessage;
+  const warning = accuracy.weak
+    ? " GPS is weak right now, so treat that number as approximate."
+    : "";
+
+  yardageResult.textContent = accuracy.weak ? `${displayed}${warning}` : displayed;
+  message.textContent = displayed;
+  setVoiceStatus(displayed);
+
+  if (shouldSpeak) {
+    speakText(`${spokenMessage}${warning}`);
+  }
 }
 
 function calculateGreenYardages(userLat, userLng, target) {
@@ -3147,36 +3478,36 @@ function buildYardageDisplayMessage(yardages) {
   const parts = [];
 
   if (yardages.front !== null) {
-    parts.push(`Front: ${yardages.front} yards`);
+    parts.push(`Front ${fromYards(yardages.front)}`);
   }
 
   if (yardages.center !== null) {
-    parts.push(`Center: ${yardages.center} yards`);
+    parts.push(`Center ${fromYards(yardages.center)}`);
   }
 
   if (yardages.back !== null) {
-    parts.push(`Back: ${yardages.back} yards`);
+    parts.push(`Back ${fromYards(yardages.back)}`);
   }
 
-  return `Hole ${round.currentHole} green yardages — ${parts.join(", ")}.`;
+  return `Hole ${round.currentHole} — ${parts.join(", ")} ${unitLabel(true)}.`;
 }
 
 function buildYardageSpokenMessage(yardages) {
   const parts = [];
 
   if (yardages.front !== null) {
-    parts.push(`front ${yardages.front}`);
+    parts.push(`front ${fromYards(yardages.front)}`);
   }
 
   if (yardages.center !== null) {
-    parts.push(`center ${yardages.center}`);
+    parts.push(`center ${fromYards(yardages.center)}`);
   }
 
   if (yardages.back !== null) {
-    parts.push(`back ${yardages.back}`);
+    parts.push(`back ${fromYards(yardages.back)}`);
   }
 
-  return `Hole ${round.currentHole}: ${parts.join(", ")} yards.`;
+  return `Hole ${round.currentHole}: ${parts.join(", ")} ${unitLabel(true)}.`;
 }
 
 function calculateYardsBetween(lat1, lng1, lat2, lng2) {
@@ -3383,17 +3714,17 @@ function addHazardForCurrentHole() {
   const lng = Number(hazardLngInput.value);
 
   if (!name) {
-    alert("Please enter a target name.");
+    notify("Please enter a target name.");
     return;
   }
 
   if (!hazardLatInput.value || !hazardLngInput.value) {
-    alert("Please enter both latitude and longitude.");
+    notify("Please enter both latitude and longitude.");
     return;
   }
 
   if (!isValidCoordinatePair(lat, lng)) {
-    alert("Target coordinates are not valid.");
+    notify("Target coordinates are not valid.");
     return;
   }
 
@@ -3447,8 +3778,11 @@ function renderHoleHazards() {
   });
 }
 
-function clearHazardsForCurrentHole() {
-  const confirmed = confirm(`Clear all hazards and layup targets for Hole ${round.currentHole}?`);
+async function clearHazardsForCurrentHole() {
+  const confirmed = await confirmAction(
+    `Clear all hazards and layup targets for hole ${round.currentHole}?`,
+    "Clear targets"
+  );
 
   if (!confirmed) {
     return;
@@ -3643,7 +3977,7 @@ function loadSelectedCourseSetup() {
   const selectedId = savedCourseSelect.value;
 
   if (!selectedId) {
-    alert("Please choose a saved course setup.");
+    notify("Please choose a saved course setup.");
     return;
   }
 
@@ -3654,7 +3988,7 @@ function loadSelectedCourseSetup() {
   });
 
   if (!course) {
-    alert("That saved course could not be found.");
+    notify("That saved course could not be found.");
     return;
   }
 
@@ -3663,7 +3997,7 @@ function loadSelectedCourseSetup() {
   courseNameInput.value = course.courseName;
   totalHolesSelect.value = String(course.totalHoles);
 
-  alert(`${course.courseName} loaded. Now add players and start the round.`);
+  notify(`${course.courseName} loaded. Now add players and start the round.`);
 }
 
 async function searchGolfApiCourses() {
@@ -4290,9 +4624,9 @@ function getGolfApiClubLocation(club) {
   ].filter(Boolean).join(", ");
 }
 
-function saveCurrentCourseSetup() {
+async function saveCurrentCourseSetup() {
   if (!round.courseName) {
-    alert("Start a round before saving a course setup.");
+    notify("Start a round before saving a course setup.");
     return;
   }
 
@@ -4300,7 +4634,10 @@ function saveCurrentCourseSetup() {
   const hasHazards = round.holeHazards && Object.keys(round.holeHazards).length > 0;
 
   if (!hasGreenTargets && !hasHazards) {
-    const confirmed = confirm("This course does not have any green targets or hazards saved yet. Save it anyway?");
+    const confirmed = await confirmAction(
+      "This course has no green targets or hazards saved yet. Save it anyway?",
+      "Save anyway"
+    );
 
     if (!confirmed) {
       return;
@@ -4325,7 +4662,10 @@ function saveCurrentCourseSetup() {
 };
 
   if (existingIndex >= 0) {
-    const confirmed = confirm(`${round.courseName} already exists. Replace the saved course setup?`);
+    const confirmed = await confirmAction(
+      `${round.courseName} is already saved. Replace that setup?`,
+      "Replace"
+    );
 
     if (!confirmed) {
       return;
@@ -4357,7 +4697,7 @@ function exportSavedCourseData() {
   const courses = getSavedCourseSetups();
 
   if (courses.length === 0) {
-    alert("There are no saved courses to export.");
+    notify("There are no saved courses to export.");
     return;
   }
 
@@ -4398,7 +4738,7 @@ function importCourseDataFromFile(event) {
       const importedCourses = getCoursesFromImportedJson(importedJson);
 
       if (importedCourses.length === 0) {
-        alert("No courses were found in that file.");
+        notify("No courses were found in that file.");
         return;
       }
 
@@ -4413,7 +4753,7 @@ function importCourseDataFromFile(event) {
       });
 
       if (normalizedCourses.length === 0) {
-        alert("No valid courses were found in that file.");
+        notify("No valid courses were found in that file.");
         return;
       }
 
@@ -4441,9 +4781,9 @@ function importCourseDataFromFile(event) {
       saveCourseSetupsToStorage(savedCourses);
       renderSavedCourseOptions();
 
-      alert(`Import complete. Added ${addedCount} course(s), replaced ${replacedCount} course(s).`);
+      notify(`Import complete. Added ${addedCount} course(s), replaced ${replacedCount} course(s).`);
     } catch (error) {
-      alert("The selected file could not be imported. Make sure it is a valid JSON file.");
+      notify("The selected file could not be imported. Make sure it is a valid JSON file.");
       console.error(error);
     }
 
@@ -4674,7 +5014,7 @@ function saveParForCurrentHole() {
   const par = Number(holeParInput.value);
 
   if (par < 3 || par > 6) {
-    alert("Please enter a par between 3 and 6.");
+    notify("Please enter a par between 3 and 6.");
     return;
   }
 
@@ -4711,10 +5051,10 @@ function formatHoleLength(hole) {
   const length = getHoleLength(hole);
 
   if (!length) {
-    return "Yardage not loaded";
+    return "Length not loaded";
   }
 
-  return `${length} yds`;
+  return formatDistance(length);
 }
 
 function getTotalCoursePar() {
@@ -5079,18 +5419,19 @@ function saveShotLog(shots) {
 
 function logShotFromForm() {
   const club = normalizeClubName(shotClubInput.value);
-  const distanceYards = Math.round(Number(shotDistanceInput.value));
+  const entered = Math.round(Number(shotDistanceInput.value));
 
   if (!club) {
     shotLogStatus.textContent = "Enter the club you hit.";
     return;
   }
 
-  if (!Number.isFinite(distanceYards) || distanceYards < 1 || distanceYards > 400) {
-    shotLogStatus.textContent = "Enter the shot distance in yards, between 1 and 400.";
+  if (!Number.isFinite(entered) || entered < 1 || entered > 400) {
+    shotLogStatus.textContent = `Enter the shot distance in ${unitLabel(true)}, between 1 and 400.`;
     return;
   }
 
+  const distanceYards = getUnitPreference() === "meters" ? Math.round(entered / 0.9144) : entered;
   const shots = getShotLog().slice();
 
   shots.push({
@@ -5101,8 +5442,11 @@ function logShotFromForm() {
     club: club,
     distanceYards: distanceYards,
     result: shotResultInput.value,
-    lie: shotLieInput.value
+    lie: shotLieInput.value,
+    direction: shotDirectionInput ? shotDirectionInput.value : "straight"
   });
+
+  buzz();
 
   saveShotLog(shots);
 
@@ -5257,8 +5601,13 @@ function exportShotLog() {
   URL.revokeObjectURL(url);
 }
 
-function clearShotLog() {
-  if (!confirm("Clear every logged shot? Learned club distances will be removed.")) {
+async function clearShotLog() {
+  const confirmed = await confirmAction(
+    "Clear every logged shot? Learned club distances will be removed.",
+    "Clear shots"
+  );
+
+  if (!confirmed) {
     return;
   }
 
@@ -5268,6 +5617,594 @@ function clearShotLog() {
   renderShotHistorySummary();
   renderShotLogStatus();
   renderClubProfileStatus();
+}
+
+// -------------------------------
+// Feedback: toasts, confirms, haptics
+// -------------------------------
+
+function notify(text) {
+  if (!toastElement || !text) {
+    return;
+  }
+
+  toastElement.textContent = text;
+  toastElement.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () {
+    toastElement.classList.add("hidden");
+  }, 3800);
+}
+
+function confirmAction(message, acceptLabel = "Confirm") {
+  if (!confirmOverlay) {
+    return Promise.resolve(true);
+  }
+
+  confirmText.textContent = message;
+  confirmAcceptBtn.textContent = acceptLabel;
+  confirmOverlay.classList.remove("hidden");
+
+  return new Promise(resolve => {
+    pendingConfirm = resolve;
+  });
+}
+
+function closeConfirm(result) {
+  if (confirmOverlay) {
+    confirmOverlay.classList.add("hidden");
+  }
+
+  if (pendingConfirm) {
+    const resolve = pendingConfirm;
+    pendingConfirm = null;
+    resolve(result);
+  }
+}
+
+function buzz(pattern = 12) {
+  if (navigator.vibrate) {
+    navigator.vibrate(pattern);
+  }
+}
+
+// -------------------------------
+// Units
+// -------------------------------
+
+function getUnitPreference() {
+  try {
+    return localStorage.getItem(UNIT_STORAGE_KEY) === "meters" ? "meters" : "yards";
+  } catch {
+    return "yards";
+  }
+}
+
+function setUnitPreference(unit) {
+  localStorage.setItem(UNIT_STORAGE_KEY, unit === "meters" ? "meters" : "yards");
+  renderCurrentHole();
+  renderShotHistorySummary();
+  renderClubProfileStatus();
+  renderUnitPreference();
+  clearYardageReadouts();
+  notify(`Distances now shown in ${unitLabel(true)}.`);
+}
+
+function unitLabel(plural = false) {
+  if (getUnitPreference() === "meters") {
+    return plural ? "meters" : "meter";
+  }
+
+  return plural ? "yards" : "yard";
+}
+
+function fromYards(yards) {
+  const value = Number(yards);
+
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  return getUnitPreference() === "meters" ? Math.round(value * 0.9144) : Math.round(value);
+}
+
+function formatDistance(yards) {
+  const converted = fromYards(yards);
+
+  return converted === null ? "" : `${converted} ${unitLabel(true)}`;
+}
+
+// -------------------------------
+// Screen wake lock
+// -------------------------------
+
+async function requestWakeLock() {
+  if (!("wakeLock" in navigator) || wakeLock) {
+    return;
+  }
+
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", function () {
+      wakeLock = null;
+    });
+  } catch {
+    wakeLock = null;
+  }
+}
+
+function releaseWakeLock() {
+  if (wakeLock) {
+    wakeLock.release().catch(function () {});
+    wakeLock = null;
+  }
+}
+
+function syncWakeLock() {
+  if (round.players.length > 0 && document.visibilityState === "visible") {
+    requestWakeLock();
+  } else {
+    releaseWakeLock();
+  }
+}
+
+// -------------------------------
+// Connectivity
+// -------------------------------
+
+function isOnline() {
+  return navigator.onLine !== false;
+}
+
+function renderConnectionState() {
+  if (offlineBanner) {
+    offlineBanner.classList.toggle("hidden", isOnline());
+  }
+}
+
+// -------------------------------
+// Location warming
+// -------------------------------
+
+function startLocationWatch() {
+  if (!navigator.geolocation || locationWatchId !== null) {
+    return;
+  }
+
+  locationWatchId = navigator.geolocation.watchPosition(
+    function (position) {
+      lastPosition = position;
+    },
+    function () {},
+    { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 }
+  );
+}
+
+function stopLocationWatch() {
+  if (locationWatchId !== null) {
+    navigator.geolocation.clearWatch(locationWatchId);
+    locationWatchId = null;
+  }
+}
+
+function getFreshCachedPosition() {
+  if (!lastPosition) {
+    return null;
+  }
+
+  return Date.now() - lastPosition.timestamp < POSITION_MAX_AGE_MS ? lastPosition : null;
+}
+
+function getAccuracyNote(position) {
+  const accuracy = position && position.coords ? Number(position.coords.accuracy) : NaN;
+
+  if (!Number.isFinite(accuracy)) {
+    return { weak: false, text: "" };
+  }
+
+  const converted = fromYards(accuracy / 0.9144);
+
+  return {
+    weak: accuracy > WEAK_ACCURACY_METERS,
+    text: `±${converted} ${unitLabel(true)} GPS accuracy`
+  };
+}
+
+// -------------------------------
+// Round history
+// -------------------------------
+
+function getRoundHistory() {
+  if (roundHistoryCache) {
+    return roundHistoryCache;
+  }
+
+  try {
+    const stored = JSON.parse(localStorage.getItem(ROUND_HISTORY_STORAGE_KEY) || "[]");
+
+    roundHistoryCache = Array.isArray(stored) ? stored : [];
+  } catch {
+    roundHistoryCache = [];
+  }
+
+  return roundHistoryCache;
+}
+
+function saveRoundHistory(rounds) {
+  const trimmed = rounds.slice(-ROUND_HISTORY_LIMIT);
+
+  localStorage.setItem(ROUND_HISTORY_STORAGE_KEY, JSON.stringify(trimmed));
+  roundHistoryCache = trimmed;
+}
+
+function roundHasScores() {
+  return round.players.some(player => Object.keys(round.scores[player] || {}).length > 0);
+}
+
+function archiveCurrentRound() {
+  if (round.players.length === 0 || !roundHasScores()) {
+    return false;
+  }
+
+  const signature = JSON.stringify(round.scores);
+
+  if (round.archivedSignature === signature) {
+    return false;
+  }
+
+  round.archivedSignature = signature;
+
+  const history = getRoundHistory().slice();
+
+  history.push({
+    id: `round-${Date.now()}`,
+    finishedAt: new Date().toISOString(),
+    courseName: round.courseName,
+    totalHoles: round.totalHoles,
+    players: round.players.slice(),
+    scores: deepCopy(round.scores),
+    holePars: deepCopy(round.holePars || {}),
+    holeStats: deepCopy(round.holeStats || {}),
+    totals: round.players.map(player => ({
+      name: player,
+      total: getPlayerTotal(player),
+      toPar: getPlayerToPar(player),
+      putts: getPlayerPuttTotal(player),
+      fairways: getPlayerFairwayCount(player),
+      greens: getPlayerGreenCount(player)
+    }))
+  });
+
+  saveRoundHistory(history);
+  renderRoundHistory();
+  return true;
+}
+
+function renderRoundHistory() {
+  if (!roundHistoryList) {
+    return;
+  }
+
+  const history = getRoundHistory().slice().reverse().slice(0, 5);
+
+  roundHistoryList.innerHTML = "";
+
+  if (history.length === 0) {
+    roundHistoryList.textContent = "No finished rounds yet.";
+    return;
+  }
+
+  history.forEach(entry => {
+    const item = document.createElement("div");
+    item.className = "history-item";
+
+    const leader = (entry.totals || [])
+      .filter(total => total.total > 0)
+      .sort((a, b) => a.total - b.total)[0];
+    const date = new Date(entry.finishedAt);
+
+    const title = document.createElement("strong");
+    title.textContent = entry.courseName || "Unnamed course";
+
+    const detail = document.createElement("span");
+    detail.textContent = leader
+      ? `${date.toLocaleDateString()} · ${entry.totalHoles} holes · ${leader.name} ${leader.total} (${formatToPar(leader.toPar)})`
+      : `${date.toLocaleDateString()} · ${entry.totalHoles} holes`;
+
+    item.appendChild(title);
+    item.appendChild(detail);
+    roundHistoryList.appendChild(item);
+  });
+}
+
+function exportRoundHistory() {
+  const history = getRoundHistory();
+
+  if (history.length === 0) {
+    notify("There are no finished rounds to export yet.");
+    return;
+  }
+
+  downloadJson({ rounds: history }, `golf-rounds-${new Date().toISOString().slice(0, 10)}.json`);
+}
+
+async function clearRoundHistory() {
+  const confirmed = await confirmAction("Delete every finished round stored on this device?", "Delete rounds");
+
+  if (!confirmed) {
+    return;
+  }
+
+  localStorage.removeItem(ROUND_HISTORY_STORAGE_KEY);
+  roundHistoryCache = null;
+  renderRoundHistory();
+  notify("Round history cleared.");
+}
+
+function downloadJson(value, filename) {
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+// -------------------------------
+// Undo for score changes
+// -------------------------------
+
+function captureScoreUndo(description) {
+  scoreUndoSnapshot = {
+    description: description,
+    scores: deepCopy(round.scores),
+    holeStats: deepCopy(round.holeStats || {})
+  };
+
+  if (undoScoreBtn) {
+    undoScoreBtn.classList.remove("hidden");
+    undoScoreBtn.textContent = `Undo ${description}`;
+  }
+}
+
+function undoLastScoreChange() {
+  if (!scoreUndoSnapshot) {
+    return;
+  }
+
+  round.scores = scoreUndoSnapshot.scores;
+  round.holeStats = scoreUndoSnapshot.holeStats;
+  scoreUndoSnapshot = null;
+
+  if (undoScoreBtn) {
+    undoScoreBtn.classList.add("hidden");
+  }
+
+  saveRoundToStorage();
+  renderCurrentHole();
+  renderScorecard();
+  notify("Last score change undone.");
+}
+
+// -------------------------------
+// Miss tendencies
+// -------------------------------
+
+function getClubTendencies() {
+  const byClub = {};
+
+  getShotLog().forEach(shot => {
+    const club = normalizeClubName(shot.club);
+
+    if (!club) {
+      return;
+    }
+
+    if (!byClub[club]) {
+      byClub[club] = { left: 0, right: 0, straight: 0, total: 0 };
+    }
+
+    const entry = byClub[club];
+
+    entry.total += 1;
+
+    if (shot.direction === "left" || shot.direction === "right") {
+      entry[shot.direction] += 1;
+    } else {
+      entry.straight += 1;
+    }
+  });
+
+  return byClub;
+}
+
+function describeClubTendency(club) {
+  const entry = getClubTendencies()[normalizeClubName(club)];
+
+  if (!entry || entry.total < MIN_SHOTS_FOR_LEARNED_CLUB) {
+    return "";
+  }
+
+  const miss = entry.left > entry.right ? "left" : "right";
+  const missCount = Math.max(entry.left, entry.right);
+
+  if (missCount < 2 || missCount / entry.total < 0.5) {
+    return "";
+  }
+
+  return `You miss ${miss} with that club in ${missCount} of ${entry.total} logged shots.`;
+}
+
+// -------------------------------
+// Players in the current round
+// -------------------------------
+
+function renderPlayerManageList() {
+  if (!playerManageList) {
+    return;
+  }
+
+  playerManageList.innerHTML = "";
+
+  if (round.players.length === 0) {
+    playerManageList.textContent = "No players yet.";
+    return;
+  }
+
+  round.players.forEach(player => {
+    const row = document.createElement("div");
+    row.className = "player-manage-row";
+
+    const name = document.createElement("span");
+    name.textContent = player;
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn btn-ghost btn-sm danger";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", function () {
+      removePlayerFromRound(player);
+    });
+
+    row.appendChild(name);
+    row.appendChild(remove);
+    playerManageList.appendChild(row);
+  });
+}
+
+function addPlayerToRound() {
+  const name = addPlayerInput.value.trim();
+
+  if (!name) {
+    playerManageStatus.textContent = "Enter a name first.";
+    return;
+  }
+
+  if (round.players.length === 0) {
+    playerManageStatus.textContent = "Start a round before adding players.";
+    return;
+  }
+
+  if (round.players.some(player => player.toLowerCase() === name.toLowerCase())) {
+    playerManageStatus.textContent = `${name} is already in this round.`;
+    return;
+  }
+
+  round.players.push(name);
+  round.scores[name] = {};
+  addPlayerInput.value = "";
+  saveRoundToStorage();
+  renderCurrentHole();
+  renderScorecard();
+  renderHomeSummary();
+  playerManageStatus.textContent = `${name} added.`;
+  notify(`${name} joined the round.`);
+}
+
+async function removePlayerFromRound(player) {
+  if (round.players.length <= 1) {
+    playerManageStatus.textContent = "A round needs at least one player.";
+    return;
+  }
+
+  const confirmed = await confirmAction(`Remove ${player} and their scores from this round?`, "Remove");
+
+  if (!confirmed) {
+    return;
+  }
+
+  round.players = round.players.filter(name => name !== player);
+  delete round.scores[player];
+
+  if (round.holeStats) {
+    delete round.holeStats[player];
+  }
+
+  saveRoundToStorage();
+  renderCurrentHole();
+  renderScorecard();
+  renderHomeSummary();
+  playerManageStatus.textContent = `${player} removed.`;
+}
+
+// -------------------------------
+// Saved course deletion
+// -------------------------------
+
+async function deleteSelectedCourseSetup() {
+  const selectedId = savedCourseSelect.value;
+
+  if (!selectedId) {
+    notify("Choose a saved course to delete.");
+    return;
+  }
+
+  const courses = getSavedCourseSetups();
+  const course = courses.find(item => item.id === selectedId);
+
+  if (!course) {
+    notify("That saved course could not be found.");
+    return;
+  }
+
+  const confirmed = await confirmAction(`Delete the saved setup for ${course.courseName}?`, "Delete course");
+
+  if (!confirmed) {
+    return;
+  }
+
+  saveCourseSetupsToStorage(courses.filter(item => item.id !== selectedId));
+  renderSavedCourseOptions();
+  renderHomeSummary();
+
+  if (selectedCourseSetup && selectedCourseSetup.id === selectedId) {
+    selectedCourseSetup = null;
+  }
+
+  notify(`${course.courseName} deleted.`);
+}
+
+// -------------------------------
+// Resume or discard a stale round
+// -------------------------------
+
+function maybeShowResumeBanner() {
+  if (!resumeBanner || round.players.length === 0) {
+    return;
+  }
+
+  const savedAt = loadedRoundSavedAt;
+
+  if (!savedAt || Date.now() - savedAt < STALE_ROUND_MS) {
+    return;
+  }
+
+  resumeBannerText.textContent =
+    `Unfinished round at ${round.courseName || "an unnamed course"} from ${new Date(savedAt).toLocaleString()}.`;
+  resumeBanner.classList.remove("hidden");
+}
+
+function hideResumeBanner() {
+  if (resumeBanner) {
+    resumeBanner.classList.add("hidden");
+  }
+}
+
+function renderUnitPreference() {
+  if (unitPreferenceSelect) {
+    unitPreferenceSelect.value = getUnitPreference();
+  }
+
+  [
+    document.getElementById("roundDistanceUnit"),
+    document.getElementById("greenDistanceUnit")
+  ].forEach(element => {
+    if (element) {
+      element.textContent = unitLabel(true);
+    }
+  });
 }
 
 // -------------------------------

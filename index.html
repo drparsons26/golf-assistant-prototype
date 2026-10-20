@@ -45,6 +45,15 @@
       </button>
     </header>
 
+    <div id="offlineBanner" class="offline-banner hidden" role="status">Offline — the caddie is using on-device handling only.</div>
+
+    <div id="resumeBanner" class="resume-banner hidden" role="status">
+      <p id="resumeBannerText">You have an unfinished round.</p>
+      <div class="btn-row">
+        <button id="resumeRoundBtn" class="btn btn-primary btn-sm" type="button">Resume</button>
+        <button id="discardRoundBtn" class="btn btn-ghost btn-sm" type="button">Start fresh</button>
+      </div>
+    </div>
     <main class="app-main">
       <!-- ============ HOME ============ -->
       <section id="setupSection" class="screen">
@@ -70,6 +79,21 @@
           <div class="stat">
             <strong id="homeClubCount">0</strong>
             <span>Clubs learned</span>
+          </div>
+        </div>
+
+        <div class="card" id="roundHistoryCard">
+          <div class="card-head">
+            <span class="card-icon"><svg aria-hidden="true"><use href="#i-card" /></svg></span>
+            <div>
+              <h3>Recent rounds</h3>
+              <p>Finished rounds are kept on this device.</p>
+            </div>
+          </div>
+          <div id="roundHistoryList" class="history-list">No finished rounds yet.</div>
+          <div class="btn-row">
+            <button id="exportRoundHistoryBtn" class="btn btn-ghost btn-sm" type="button">Export rounds</button>
+            <button id="clearRoundHistoryBtn" class="btn btn-ghost btn-sm danger" type="button">Clear rounds</button>
           </div>
         </div>
 
@@ -189,6 +213,7 @@
           </label>
           <div class="btn-row">
             <button id="loadCourseSetupBtn" class="btn btn-secondary" type="button">Load</button>
+            <button id="deleteCourseSetupBtn" class="btn btn-ghost danger" type="button">Delete</button>
             <button id="importCourseDataBtn" class="btn btn-ghost" type="button">Import</button>
             <button id="exportCourseDataBtn" class="btn btn-ghost" type="button">Export</button>
           </div>
@@ -223,7 +248,7 @@
           <div class="distance-main">
             <span class="distance-label">To center</span>
             <strong id="roundYardageValue" class="distance-value">—</strong>
-            <span class="distance-unit">yards</span>
+            <span class="distance-unit" id="roundDistanceUnit">yards</span>
           </div>
           <div class="distance-side">
             <div><span>Front</span><strong id="roundYardFront">—</strong></div>
@@ -236,13 +261,32 @@
           <div class="card-head">
             <div>
               <h3>Scores</h3>
-              <p>Tap the steppers or just tell the caddie.</p>
+              <p>Tap a stepper, add putts, mark the fairway and green.</p>
             </div>
+            <button id="managePlayersBtn" class="btn btn-ghost btn-sm" type="button">Players</button>
           </div>
           <div id="scoreInputs" class="score-list"></div>
-          <button id="saveScoresBtn" class="btn btn-primary btn-block" type="button">Save scores</button>
+          <div class="btn-row">
+            <button id="saveScoresBtn" class="btn btn-primary" type="button">Save scores</button>
+            <button id="undoScoreBtn" class="btn btn-ghost hidden" type="button">Undo</button>
+          </div>
           <p id="message" class="status-line"></p>
         </div>
+
+        <details class="card sheet" id="playersSheet">
+          <summary>Players in this round</summary>
+          <div class="sheet-body">
+            <div id="playerManageList" class="player-manage-list"></div>
+            <div class="inline-field">
+              <label class="field">
+                <span class="field-label">Add a player</span>
+                <input id="addPlayerInput" type="text" placeholder="Name" autocomplete="off" />
+              </label>
+              <button id="addPlayerBtn" class="btn btn-secondary" type="button">Add</button>
+            </div>
+            <p id="playerManageStatus" class="status-line"></p>
+          </div>
+        </details>
 
         <div class="card caddie-card">
           <div class="card-head">
@@ -311,6 +355,14 @@
                 <option value="sand">Sand</option>
               </select>
             </label>
+            <label class="field">
+              <span class="field-label">Direction</span>
+              <select id="shotDirectionInput">
+                <option value="straight">Straight</option>
+                <option value="left">Missed left</option>
+                <option value="right">Missed right</option>
+              </select>
+            </label>
           </div>
           <div class="btn-row">
             <button id="useGpsForShotBtn" class="btn btn-ghost" type="button">Use GPS distance</button>
@@ -375,7 +427,7 @@
             <div class="green-center">
               <span>Center</span>
               <strong id="yardCenter">—</strong>
-              <small>yards</small>
+              <small id="greenDistanceUnit">yards</small>
             </div>
             <div class="green-side">
               <span>Back</span>
@@ -509,8 +561,23 @@
           </div>
         </div>
 
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h3>Preferences</h3>
+              <p>Applies to every distance the app shows or speaks.</p>
+            </div>
+          </div>
+          <label class="field">
+            <span class="field-label">Distance units</span>
+            <select id="unitPreferenceSelect">
+              <option value="yards">Yards</option>
+              <option value="meters">Meters</option>
+            </select>
+          </label>
+        </div>
+
         <div class="card info-list">
-          <div class="info-row"><span>Units</span><strong>Yards</strong></div>
           <div class="info-row"><span>Voice agent</span><strong>AI first, local backup</strong></div>
           <div class="info-row"><span>Storage</span><strong>This device only</strong></div>
           <div class="info-row"><span>Version</span><strong>Prototype</strong></div>
@@ -535,6 +602,18 @@
         <svg aria-hidden="true"><use href="#i-dots" /></svg><span>More</span>
       </button>
     </nav>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <div id="confirmOverlay" class="confirm-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="confirmText">
+    <div class="confirm-box">
+      <p id="confirmText">Are you sure?</p>
+      <div class="btn-row">
+        <button id="confirmCancelBtn" class="btn btn-ghost" type="button">Cancel</button>
+        <button id="confirmAcceptBtn" class="btn btn-danger" type="button">Confirm</button>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>

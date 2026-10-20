@@ -27,16 +27,20 @@ The earlier decorative hole-map graphic has been removed rather than restyled: i
 
 ### Round Management and Scoring
 
-- Start a 9- or 18-hole round with named players.
-- Enter and save scores manually or through natural speech.
+- Start a 9- or 18-hole round with named players, and add or remove players mid-round.
+- Enter scores with steppers, by keyboard, or through natural speech. Scores save as you tap, when you leave the Round screen, and when the app is backgrounded, so a stroke is never lost by switching tabs.
+- Track putts, fairways hit, and greens in regulation per player per hole. Totals appear on the scorecard.
+- Undo the last score, putt, fairway, or green change.
 - Correct an existing score for a named player and hole.
 - View totals, the current leader, and performance relative to par.
 - Move to the next, previous, or a specified hole.
 - Edit the current hole's par.
-- End a round manually with **End Round** or through the voice agent.
-- Reset a round and restore saved round state after reloading the app.
+- End a round manually with **End Round** or through the voice agent. Finishing or resetting a round archives it to `golfRoundHistory`; the five most recent appear on the home screen and the full set exports as JSON.
+- Reopening the app after a long gap offers **Resume** or **Start fresh** instead of silently continuing a stale round.
+- The screen stays awake while a round is active, and GPS keeps a warm fix so distance answers are immediate.
+- Distances follow a yards or meters preference set in Settings.
 
-Voice action handlers validate player names, scores from 1 through 20, holes within the round, and pars from 3 through 6 before applying those actions.
+Voice action handlers validate player names, scores from 1 through 20, holes within the round, and pars from 3 through 6 before applying those actions. Confirmations and errors use in-app messages rather than blocking browser dialogs.
 
 ### Natural-Language Voice Agent
 
@@ -115,7 +119,7 @@ The GOLFAPI CSV samples were used to understand the provider's structure. The ap
 - Save course setups locally for reuse.
 - Import and export saved course setups as JSON.
 
-GPS calculations run in the frontend. A mapped point is required to calculate its distance. Distances are straight-line estimates based on coordinates, not slope-adjusted playing distances or walking routes.
+GPS calculations run in the frontend. A mapped point is required to calculate its distance. Distances are straight-line estimates based on coordinates, not slope-adjusted playing distances or walking routes. Every reading reports its GPS accuracy, and a fix worse than 25 meters is labeled approximate in both the on-screen text and the spoken answer.
 
 ### Caddie and Club Recommendations
 
@@ -131,7 +135,7 @@ Wind, weather, elevation, lie, and pin location are still not fetched, so advice
 
 Settings has a club-distance editor. Each row is a club name and a carry distance between 20 and 400 yards; rows left blank are ignored. Saved distances are stored in `golfPlayerClubProfile` and sent to the AI agent as round context.
 
-The Active Round screen has a shot log. Each entry records club, distance, result (carried as planned, short, or long), lie, course, and hole. A club's distance is learned from the median of its shots marked "carried as planned" once it has at least three of them, and a learned distance overrides the manually saved one for that club. Shot history can be exported as JSON or cleared in Settings. The log keeps the most recent 500 shots.
+The Active Round screen has a shot log. Each entry records club, distance, result (as planned, short, or long), miss direction, lie, course, and hole. A club's distance is learned from the median of its shots marked "as planned" once it has at least three of them, and a learned distance overrides the manually saved one for that club. Once a club has three logged shots and misses to one side in at least half of them, the caddie says so with its recommendation. Shot history can be exported as JSON or cleared in Settings. The log keeps the most recent 500 shots.
 
 After a club recommendation, the shot-log club and distance fields are prefilled so logging the shot takes one tap.
 
@@ -140,7 +144,9 @@ After a club recommendation, the shot-log club and distance fields are prefilled
 - `golfRound` stores round state in browser local storage.
 - `golfCourseSetups` stores the local course library.
 - `golfPlayerClubProfile` stores the club-distance editor's values.
-- `golfShotLog` stores logged shots and drives learned club distances.
+- `golfShotLog` stores logged shots, including miss direction, and drives learned club distances and miss tendencies.
+- `golfRoundHistory` stores finished rounds with scores, pars, and per-hole stats.
+- `golfDistanceUnit` stores the yards or meters preference.
 - `golfAppAccessToken` stores this device's server access code.
 - A web manifest and icons support adding the app to a phone's home screen.
 - The service worker serves network-first with a cached fallback, so a new deployment is picked up on the next load while cached assets still support offline use.
@@ -362,7 +368,8 @@ Before expanding beyond prototype testing, remaining work includes:
 - A real mapped hole view. The app shows distances, not course layouts.
 - Wind, lie, elevation, and other contextual inputs for caddie advice.
 - Streaming or Realtime conversation for smoother voice interaction.
-- Accounts, durable storage, cross-device sync, and conversation memory. Club distances and shot history live only in the browser that recorded them.
+- Accounts, durable storage, cross-device sync, and conversation memory. Club distances, shot history, and round history live only in the browser that recorded them.
+- Statistics across rounds. Putts, fairways, and greens are recorded per round but not yet aggregated into trends or a handicap.
 - Per-user credentials and cost monitoring. The current access code is one shared secret with in-memory rate limits, not per-user authentication, and it resets when the server restarts.
 - Voice control for logging shots; shots are logged through the Active Round form today.
 - Production privacy/data handling, broader tests, and native store packaging.
