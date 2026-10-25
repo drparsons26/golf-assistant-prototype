@@ -151,6 +151,7 @@ const confirmCancelBtn = document.getElementById("confirmCancelBtn");
 
 let lastYardageHole = null;
 let loadedRoundSavedAt = 0;
+let serverPaused = false;
 let recognition = null;
 let selectedCourseSetup = null;
 let isHandlingVoiceCommand = false;
@@ -2013,6 +2014,10 @@ async function buildApiError(response, label) {
 
   if (body.code === "access_code_required") {
     error.userMessage = "This server needs an access code. Open Settings and enter the access code, then try again.";
+  } else if (body.code === "service_paused") {
+    error.userMessage = body.error || "The caddie service is paused right now. Scoring and saved course data still work.";
+  } else if (body.code === "server_budget_reached") {
+    error.userMessage = body.error || "This server hit its daily caddie budget. Scoring and saved course data still work.";
   } else if (response.status === 401 || response.status === 403) {
     error.userMessage = "The server's provider key was rejected. Check the GOLFAPI or OpenAI key on the server.";
   } else if (response.status === 429) {
@@ -5175,6 +5180,7 @@ async function checkServerAccessRequirement() {
     const health = await response.json();
 
     serverRequiresAccessCode = Boolean(health.accessTokenRequired);
+    renderPausedState(Boolean(health.paused));
 
     if (!serverRequiresAccessCode) {
       accessCodeHint.textContent = "This server does not require an access code right now.";
@@ -5187,6 +5193,23 @@ async function checkServerAccessRequirement() {
   } catch {
     accessCodeHint.textContent = "Could not reach the server to check whether an access code is required.";
   }
+}
+
+function renderPausedState(paused) {
+  serverPaused = paused;
+
+  if (!offlineBanner) {
+    return;
+  }
+
+  if (paused) {
+    offlineBanner.textContent = "Caddie service paused — scoring, the scorecard, and saved courses still work.";
+    offlineBanner.classList.remove("hidden");
+    return;
+  }
+
+  offlineBanner.textContent = "Offline — the caddie is using on-device handling only.";
+  renderConnectionState();
 }
 
 // -------------------------------

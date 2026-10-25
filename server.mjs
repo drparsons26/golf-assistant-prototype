@@ -17,21 +17,27 @@ const golfApiBaseUrl = process.env.GOLFAPI_BASE_URL || "https://golfapi.io/api/v
 const allowedGolfApiResources = new Set(["clubs", "courses", "coordinates"]);
 
 const accessToken = String(process.env.APP_ACCESS_TOKEN || "").trim();
+const adminToken = String(process.env.ADMIN_TOKEN || "").trim();
 const rateLimits = {
   ai: {
     windowMs: 5 * 60 * 1000,
     windowLimit: Number(process.env.AI_WINDOW_REQUEST_LIMIT || 30),
-    dailyLimit: Number(process.env.AI_DAILY_REQUEST_LIMIT || 400)
+    dailyLimit: Number(process.env.AI_DAILY_REQUEST_LIMIT || 400),
+    globalDailyLimit: Number(process.env.AI_GLOBAL_DAILY_LIMIT || 1500)
   },
   golfapi: {
     windowMs: 5 * 60 * 1000,
     windowLimit: Number(process.env.GOLFAPI_WINDOW_REQUEST_LIMIT || 60),
-    dailyLimit: Number(process.env.GOLFAPI_DAILY_REQUEST_LIMIT || 600)
+    dailyLimit: Number(process.env.GOLFAPI_DAILY_REQUEST_LIMIT || 600),
+    globalDailyLimit: Number(process.env.GOLFAPI_GLOBAL_DAILY_LIMIT || 2000)
   }
 };
 const rateLimitBuckets = new Map();
 const dailyCounters = new Map();
+const globalDailyCounters = { ai: 0, golfapi: 0 };
 let dailyCounterDay = currentUtcDay();
+let apiPaused = String(process.env.API_PAUSED || "").trim().toLowerCase() === "true";
+let pausedReason = apiPaused ? "Paused at startup by API_PAUSED." : "";
 const golfApiCache = new Map();
 const GOLFAPI_CACHE_MAX_ENTRIES = 120;
 const GOLFAPI_CACHE_MAX_BYTES = 1024 * 1024;
@@ -42,7 +48,9 @@ const publicFiles = new Set([
   "style.css",
   "manifest.webmanifest",
   "service-worker.js",
-  "make-icons.html"
+  "make-icons.html",
+  "privacy.html",
+  "terms.html"
 ]);
 const publicDirectories = new Set(["icons"]);
 
@@ -67,8 +75,14 @@ createServer(async (req, res) => {
         model,
         openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
         golfApiConfigured: Boolean(process.env.GOLFAPI_API_KEY),
-        accessTokenRequired: accessToken !== ""
+        accessTokenRequired: accessToken !== "",
+        paused: apiPaused
       });
+      return;
+    }
+
+    if (url.pathname === "/api/admin/usage") {
+      await handleAdminRequest(req, res);
       return;
     }
 
@@ -120,7 +134,18 @@ createServer(async (req, res) => {
     console.warn("Access control: APP_ACCESS_TOKEN is not set. The AI and GOLFAPI endpoints are open to anyone who can reach this server.");
   }
 
-  console.log(`Rate limits: AI ${rateLimits.ai.windowLimit}/5 min and ${rateLimits.ai.dailyLimit}/day; GOLFAPI ${rateLimits.golfapi.windowLimit}/5 min and ${rateLimits.golfapi.dailyLimit}/day, per client.`);
+  console.log(`Per-client limits: AI ${rateLimits.ai.windowLimit}/5 min and ${rateLimits.ai.dailyLimit}/day; GOLFAPI ${rateLimits.golfapi.windowLimit}/5 min and ${rateLimits.golfapi.dailyLimit}/day.`);
+  console.log(`Server-wide daily ceilings: AI ${rateLimits.ai.globalDailyLimit}; GOLFAPI ${rateLimits.golfapi.globalDailyLimit}.`);
+
+  if (adminToken) {
+    console.log("Admin control: GET/POST /api/admin/usage with the x-admin-token header reports usage and pauses or resumes the AI endpoints.");
+  } else {
+    console.warn("Admin control: ADMIN_TOKEN is not set, so the remote pause switch is disabled. Set it to pause spending without a redeploy.");
+  }
+
+  if (apiPaused) {
+    console.warn("Admin control: the AI and GOLFAPI endpoints start paused because API_PAUSED is true.");
+  }
 });
 
 function allowApiRequest(req, res, limitName) {
@@ -132,19 +157,98 @@ function allowApiRequest(req, res, limitName) {
     return false;
   }
 
+  if (apiPaused) {
+    sendJson(res, 503, {
+      code: "service_paused",
+      error: "The caddie service is paused right now. Scoring, the scorecard, and saved course data still work."
+    });
+    return false;
+  }
+
   const limitResult = checkRateLimit(getClientKey(req), limitName);
 
   if (!limitResult.allowed) {
     res.setHeader("Retry-After", String(limitResult.retryAfterSeconds));
     sendJson(res, 429, {
-      error: limitResult.scope === "day"
-        ? "Daily request limit reached for this server. Try again tomorrow."
-        : "Too many requests in a short time. Wait a moment and ask again."
+      code: limitResult.scope === "server" ? "server_budget_reached" : "rate_limited",
+      error: describeLimit(limitResult.scope)
     });
     return false;
   }
 
   return true;
+}
+
+function describeLimit(scope) {
+  if (scope === "server") {
+    return "This server hit its daily budget for caddie requests. Scoring and saved course data still work, and the budget resets at midnight UTC.";
+  }
+
+  if (scope === "day") {
+    return "Daily request limit reached for this device. Try again tomorrow.";
+  }
+
+  return "Too many requests in a short time. Wait a moment and ask again.";
+}
+
+async function handleAdminRequest(req, res) {
+  if (!adminToken) {
+    sendJson(res, 404, { error: "Admin controls are not enabled on this server." });
+    return;
+  }
+
+  const provided = String(req.headers["x-admin-token"] || "").trim();
+  const matches = provided.length === adminToken.length &&
+    timingSafeEqual(Buffer.from(provided), Buffer.from(adminToken));
+
+  if (!matches) {
+    sendJson(res, 401, { error: "Admin token required." });
+    return;
+  }
+
+  if (req.method === "POST") {
+    let body;
+
+    try {
+      body = await readJsonBody(req, 4 * 1024);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+      return;
+    }
+
+    if (typeof body.paused !== "boolean") {
+      sendJson(res, 400, { error: "Send { \"paused\": true } or { \"paused\": false }." });
+      return;
+    }
+
+    apiPaused = body.paused;
+    pausedReason = apiPaused
+      ? String(body.reason || "Paused through the admin endpoint.")
+      : "";
+
+    console.warn(`Admin control: AI and GOLFAPI endpoints ${apiPaused ? "paused" : "resumed"}.`);
+  } else if (req.method !== "GET") {
+    sendJson(res, 405, { error: "Use GET to read usage or POST to pause and resume." });
+    return;
+  }
+
+  rollDailyCountersIfNeeded();
+
+  sendJson(res, 200, {
+    paused: apiPaused,
+    pausedReason: pausedReason,
+    utcDay: dailyCounterDay,
+    secondsUntilReset: secondsUntilUtcMidnight(),
+    usage: {
+      ai: { today: globalDailyCounters.ai, dailyCeiling: rateLimits.ai.globalDailyLimit },
+      golfapi: { today: globalDailyCounters.golfapi, dailyCeiling: rateLimits.golfapi.globalDailyLimit }
+    },
+    perClientLimits: {
+      ai: { perWindow: rateLimits.ai.windowLimit, perDay: rateLimits.ai.dailyLimit },
+      golfapi: { perWindow: rateLimits.golfapi.windowLimit, perDay: rateLimits.golfapi.dailyLimit }
+    },
+    note: "Counters live in server memory and reset on restart or at midnight UTC."
+  });
 }
 
 function hasValidAccessToken(req) {
@@ -170,18 +274,18 @@ function getClientKey(req) {
 function checkRateLimit(clientKey, limitName) {
   const limit = rateLimits[limitName];
   const now = Date.now();
-  const today = currentUtcDay();
 
-  if (today !== dailyCounterDay) {
-    dailyCounterDay = today;
-    dailyCounters.clear();
+  rollDailyCountersIfNeeded();
+
+  if (globalDailyCounters[limitName] >= limit.globalDailyLimit) {
+    return { allowed: false, scope: "server", retryAfterSeconds: secondsUntilUtcMidnight() };
   }
 
   const dailyKey = `${limitName}:${clientKey}`;
   const dailyCount = dailyCounters.get(dailyKey) || 0;
 
   if (dailyCount >= limit.dailyLimit) {
-    return { allowed: false, scope: "day", retryAfterSeconds: 3600 };
+    return { allowed: false, scope: "day", retryAfterSeconds: secondsUntilUtcMidnight() };
   }
 
   const windowKey = `${limitName}:${clientKey}`;
@@ -199,9 +303,28 @@ function checkRateLimit(clientKey, limitName) {
   timestamps.push(now);
   rateLimitBuckets.set(windowKey, timestamps);
   dailyCounters.set(dailyKey, dailyCount + 1);
+  globalDailyCounters[limitName] += 1;
   pruneRateLimitBuckets(now);
 
   return { allowed: true };
+}
+
+function rollDailyCountersIfNeeded() {
+  const today = currentUtcDay();
+
+  if (today !== dailyCounterDay) {
+    dailyCounterDay = today;
+    dailyCounters.clear();
+    globalDailyCounters.ai = 0;
+    globalDailyCounters.golfapi = 0;
+  }
+}
+
+function secondsUntilUtcMidnight() {
+  const now = new Date();
+  const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+
+  return Math.max(1, Math.ceil((midnight - now.getTime()) / 1000));
 }
 
 function pruneRateLimitBuckets(now) {

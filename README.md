@@ -285,12 +285,14 @@ A deployed build is only confirmed when `/api/health` responds and the deploy's 
 
 | Endpoint | Behavior |
 | --- | --- |
-| `GET /api/health` | Reports server status, model, key configuration booleans, and whether an access code is required |
+| `GET /api/health` | Reports server status, model, key configuration booleans, whether an access code is required, and whether the service is paused |
 | `POST /api/voice-agent` | Accepts transcript, round state, and optional client metadata; returns a structured action |
 | `POST /api/transcribe` | Accepts recorded audio and returns a transcript |
 | `GET /api/golfapi/clubs[/:id]` | Proxies club search or details |
 | `GET /api/golfapi/courses[/:id]` | Proxies course data |
 | `GET /api/golfapi/coordinates[/:id]` | Proxies mapped course points |
+| `GET /api/admin/usage` | Reports today's server-wide usage against the ceilings (admin token required) |
+| `POST /api/admin/usage` | Pauses or resumes the paid endpoints (admin token required) |
 
 Voice-agent JSON bodies are limited to 256 KiB and audio bodies to 12 MiB. OpenAI and GOLFAPI credentials are used by the backend for upstream requests.
 
@@ -303,6 +305,30 @@ Each client, identified by `X-Forwarded-For` or the socket address, gets a rolli
 Successful GOLFAPI responses are cached in server memory, keyed by the full upstream URL: 30 minutes for club searches and 12 hours for course and coordinate data, capped at 120 entries and 1 MiB per entry. Repeating a course load therefore costs no provider quota. The browser also caches each loaded course bundle for the session, so switching between tees or courses does not refetch.
 
 Each AI-first voice request can incur OpenAI usage; recorded-audio transcription can incur separate usage. Reusing locally saved targets permits GPS calculations without refetching the course.
+
+### Spending Ceilings and the Kill Switch
+
+Per-client limits stop one device from flooding the server; they do not cap the bill. Two server-wide daily ceilings do that: `AI_GLOBAL_DAILY_LIMIT` (default 1500) across `/api/voice-agent` and `/api/transcribe`, and `GOLFAPI_GLOBAL_DAILY_LIMIT` (default 2000) across the proxy. When a ceiling is reached, further calls return `429` with `code: "server_budget_reached"` until midnight UTC, and the app says so instead of failing vaguely. Scoring, the scorecard, GPS distances, and saved course data keep working the whole time, because they never touch the server.
+
+The kill switch pauses all paid endpoints at once. Set `API_PAUSED=true` to start paused, or flip it at runtime without a redeploy:
+
+```bash
+ADMIN=$ADMIN_TOKEN
+BASE=https://golf-assistant-prototype.onrender.com
+
+# What has today cost so far?
+curl -s -H "x-admin-token: $ADMIN" "$BASE/api/admin/usage"
+
+# Stop spending immediately
+curl -s -X POST -H "x-admin-token: $ADMIN" -H "Content-Type: application/json" \
+  -d '{"paused":true,"reason":"investigating usage"}' "$BASE/api/admin/usage"
+
+# Resume
+curl -s -X POST -H "x-admin-token: $ADMIN" -H "Content-Type: application/json" \
+  -d '{"paused":false}' "$BASE/api/admin/usage"
+```
+
+`/api/admin/usage` returns `404` when `ADMIN_TOKEN` is unset and `401` without a matching `x-admin-token` header. `/api/health` reports `paused` so the app can show a banner. Counters and the paused flag live in server memory: a restart clears the counters and reverts to the `API_PAUSED` environment value, so treat a runtime pause as temporary and set the variable in Render for anything lasting.
 
 ### Static File Serving
 
@@ -328,6 +354,8 @@ Every other request path returns `404 Not found`, including `.env`, `.env.exampl
 | `render.yaml` | Render service configuration for reference and validation |
 | `manifest.webmanifest` | PWA name, appearance, launch path, and icons |
 | `service-worker.js` | Network-first asset caching with offline fallback |
+| `privacy.html` | Privacy policy served by the app |
+| `terms.html` | Terms of use served by the app |
 | `icons/` | App icon assets |
 | `make-icons.html` | Icon-generation helper |
 
