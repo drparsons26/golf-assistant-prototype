@@ -510,6 +510,40 @@
           </div>
         </div>
 
+        <div class="card" id="accountCard">
+          <div class="card-head">
+            <span class="card-icon accent"><svg aria-hidden="true"><use href="#i-home" /></svg></span>
+            <div>
+              <h3>Account and sync</h3>
+              <p id="accountHint">Checking whether this server offers accounts...</p>
+            </div>
+          </div>
+
+          <div id="accountSignedOut" class="hidden">
+            <label class="field">
+              <span class="field-label">Email</span>
+              <input id="accountEmailInput" type="email" autocomplete="email" placeholder="you@example.com" />
+            </label>
+            <div class="btn-row">
+              <button id="sendLoginLinkBtn" class="btn btn-primary" type="button">Email me a sign-in link</button>
+            </div>
+          </div>
+
+          <div id="accountSignedIn" class="hidden">
+            <div class="info-row"><span>Signed in as</span><strong id="accountEmailLabel">—</strong></div>
+            <div class="btn-row">
+              <button id="syncNowBtn" class="btn btn-primary" type="button">Sync now</button>
+              <button id="accountExportBtn" class="btn btn-ghost" type="button">Export account</button>
+              <button id="signOutBtn" class="btn btn-ghost" type="button">Sign out</button>
+            </div>
+            <div class="btn-row">
+              <button id="deleteAccountBtn" class="btn btn-ghost danger" type="button">Delete account and data</button>
+            </div>
+          </div>
+
+          <p id="accountStatus" class="status-line">Your data is stored on this device.</p>
+        </div>
+
         <div class="card">
           <div class="card-head">
             <span class="card-icon"><svg aria-hidden="true"><use href="#i-gear" /></svg></span>

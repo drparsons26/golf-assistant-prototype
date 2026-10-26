@@ -169,7 +169,7 @@ Course search/load -> Node backend -> GOLFAPI -> local course setup
 GPS yardage       -> browser location + saved coordinates -> distance
 ```
 
-The backend uses Node's built-in HTTP server and `fetch`; it does not currently use Express or third-party npm dependencies. Frontend code is plain HTML, CSS, and JavaScript.
+The backend uses Node's built-in HTTP server and `fetch`. Its only dependency is `pg`, the PostgreSQL driver used when accounts are enabled. Frontend code is plain HTML, CSS, and JavaScript.
 
 ## Run Locally
 
@@ -291,6 +291,13 @@ A deployed build is only confirmed when `/api/health` responds and the deploy's 
 | `GET /api/golfapi/clubs[/:id]` | Proxies club search or details |
 | `GET /api/golfapi/courses[/:id]` | Proxies course data |
 | `GET /api/golfapi/coordinates[/:id]` | Proxies mapped course points |
+| `POST /api/account/login-link` | Emails (or logs) a single-use sign-in link |
+| `GET /signin?token=` | Redeems a sign-in link and sets the session cookie |
+| `GET /api/account` | Reports whether this device is signed in |
+| `POST /api/account/sync` | Pushes device data and returns the merged account data |
+| `GET /api/account/export` | Downloads everything in the account as JSON |
+| `DELETE /api/account` | Deletes the account and all personal rows |
+| `POST /api/account/signout` | Clears the session |
 | `GET /api/admin/usage` | Reports today's server-wide usage against the ceilings (admin token required) |
 | `POST /api/admin/usage` | Pauses or resumes the paid endpoints (admin token required) |
 
@@ -339,6 +346,28 @@ The server does not serve arbitrary files from the project directory. It serves 
 
 Every other request path returns `404 Not found`, including `.env`, `.env.example`, `server.mjs`, `package.json`, `.gitignore`, any dot-file or dot-directory such as `.git/`, nested paths outside `icons/`, and encoded traversal attempts like `/..%2F.env`. `.gitignore` controls Git tracking only; this allowlist is the HTTP access control.
 
+### Accounts and Sync
+
+Accounts are optional and controlled entirely by `DATABASE_URL`. Leave it unset and the app runs in device-only mode: sign-in is hidden, nothing is uploaded, and every feature still works. Set it and `/api/health` reports `accountsEnabled: true`, which reveals the account card in Settings.
+
+Sign-in is a passwordless email link. `POST /api/account/login-link` stores only a SHA-256 hash of a single-use token that expires in 15 minutes; `GET /signin?token=…` redeems it, creates the user if needed, and sets an `HttpOnly`, `SameSite=Lax`, `Secure` session cookie for 90 days. Sessions are stored as hashes too, so the database never holds a usable credential. Without `RESEND_API_KEY` and `LOGIN_EMAIL_FROM`, the link is written to the server log instead of emailed, which is enough for solo testing.
+
+The phone stays the source of truth during a round. Sync is a push-then-pull on `POST /api/account/sync`, and runs when the app loads and when a round is finished. Finished rounds, shots, and club distances upload; the round in progress does not. Merging is additive and keyed by ID, so playing offline on two devices cannot lose a round.
+
+| Table | Scope | Holds |
+| --- | --- | --- |
+| `users`, `sessions`, `login_links` | per user | email, hashed tokens, timestamps |
+| `rounds` | per user | finished rounds with scores, pars, and per-hole stats |
+| `shots` | per user | club, distance, result, lie, miss direction |
+| `club_distances` | per user | carry distance per club |
+| `courses` | shared | pars, tee lengths, green targets, hazards |
+
+`courses` is deliberately shared rather than per-user: course data describes a golf course, not a person, so one golfer loading a course spares every other golfer a provider lookup. It is not removed by account deletion.
+
+`DELETE /api/account` removes the user row; `sessions`, `rounds`, `shots`, and `club_distances` cascade with it. `GET /api/account/export` returns everything the account holds as JSON. Neither touches the copy in the browser.
+
+The schema is created idempotently at startup, so deploying against an empty database needs no migration step.
+
 ## Repository Guide
 
 | File | Role |
@@ -346,7 +375,8 @@ Every other request path returns `404 Not found`, including `.env`, `.env.exampl
 | `index.html` | Screens, forms, navigation, and app structure |
 | `style.css` | Design tokens, light/dark themes, and all screen styling |
 | `app.js` | Round state, UI, speech, action validation, GPS, course loading, and local storage |
-| `server.mjs` | Static hosting, environment loading, OpenAI calls, schema, transcription, and GOLFAPI proxy |
+| `server.mjs` | Static hosting, environment loading, OpenAI calls, schema, transcription, GOLFAPI proxy, and account routes |
+| `db.mjs` | Postgres pool, table creation, sign-in tokens, sessions, and sync queries |
 | `package.json` | Project metadata and start/dev scripts |
 | `.env.example` | Environment-variable template without credentials |
 | `.gitignore` | Excludes local `.env`, dependencies, and selected logs |

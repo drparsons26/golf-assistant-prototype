@@ -4,6 +4,19 @@ import { existsSync, readFileSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  isDatabaseConfigured,
+  initializeSchema,
+  createLoginLink,
+  redeemLoginLink,
+  getUserForSession,
+  deleteSession,
+  deleteUser,
+  pushUserData,
+  pullUserData,
+  normalizeEmail,
+  isValidEmail
+} from "./db.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -76,8 +89,19 @@ createServer(async (req, res) => {
         openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
         golfApiConfigured: Boolean(process.env.GOLFAPI_API_KEY),
         accessTokenRequired: accessToken !== "",
-        paused: apiPaused
+        paused: apiPaused,
+        accountsEnabled: isDatabaseConfigured()
       });
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/account")) {
+      await handleAccountRequest(req, res, url);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/signin") {
+      await handleSignInRedemption(req, res, url);
       return;
     }
 
@@ -146,6 +170,14 @@ createServer(async (req, res) => {
   if (apiPaused) {
     console.warn("Admin control: the AI and GOLFAPI endpoints start paused because API_PAUSED is true.");
   }
+
+  if (isDatabaseConfigured()) {
+    initializeSchema()
+      .then(() => console.log("Accounts: DATABASE_URL is set and the schema is ready. Sign-in and sync are available."))
+      .catch(error => console.error("Accounts: schema setup failed:", error.message));
+  } else {
+    console.log("Accounts: DATABASE_URL is not set, so the app runs in device-only mode with no sign-in or sync.");
+  }
 });
 
 function allowApiRequest(req, res, limitName) {
@@ -189,6 +221,199 @@ function describeLimit(scope) {
   }
 
   return "Too many requests in a short time. Wait a moment and ask again.";
+}
+
+async function handleAccountRequest(req, res, url) {
+  if (!isDatabaseConfigured()) {
+    sendJson(res, 501, {
+      code: "accounts_disabled",
+      error: "This server runs in device-only mode. Your data stays in this browser."
+    });
+    return;
+  }
+
+  const route = url.pathname.replace("/api/account", "") || "/";
+
+  try {
+    if (req.method === "POST" && route === "/login-link") {
+      await handleLoginLinkRequest(req, res, url);
+      return;
+    }
+
+    const user = await getUserForSession(readSessionCookie(req));
+
+    if (req.method === "GET" && route === "/") {
+      sendJson(res, 200, user ? { signedIn: true, email: user.email } : { signedIn: false });
+      return;
+    }
+
+    if (req.method === "POST" && route === "/signout") {
+      await deleteSession(readSessionCookie(req));
+      res.setHeader("Set-Cookie", buildSessionCookie("", 0));
+      sendJson(res, 200, { signedIn: false });
+      return;
+    }
+
+    if (!user) {
+      sendJson(res, 401, { code: "signin_required", error: "Sign in to use sync." });
+      return;
+    }
+
+    if (req.method === "POST" && route === "/sync") {
+      const body = await readJsonBody(req, 2 * 1024 * 1024);
+      const pushed = await pushUserData(user.id, body || {});
+      const data = await pullUserData(user.id);
+
+      sendJson(res, 200, { pushed, data, syncedAt: new Date().toISOString() });
+      return;
+    }
+
+    if (req.method === "GET" && route === "/export") {
+      const data = await pullUserData(user.id);
+
+      res.setHeader("Content-Disposition", `attachment; filename="golf-assistant-account.json"`);
+      sendJson(res, 200, { email: user.email, exportedAt: new Date().toISOString(), data });
+      return;
+    }
+
+    if (req.method === "DELETE" && route === "/") {
+      await deleteUser(user.id);
+      res.setHeader("Set-Cookie", buildSessionCookie("", 0));
+      sendJson(res, 200, { deleted: true });
+      return;
+    }
+
+    sendJson(res, 404, { error: "Unknown account route." });
+  } catch (error) {
+    console.error("Account request failed:", error.message);
+    sendJson(res, 500, { error: "That account request could not be completed." });
+  }
+}
+
+async function handleLoginLinkRequest(req, res, url) {
+  let body;
+
+  try {
+    body = await readJsonBody(req, 4 * 1024);
+  } catch (error) {
+    sendJson(res, 400, { error: error.message });
+    return;
+  }
+
+  const email = normalizeEmail(body && body.email);
+
+  if (!isValidEmail(email)) {
+    sendJson(res, 400, { error: "Enter a valid email address." });
+    return;
+  }
+
+  if (!checkRateLimit(getClientKey(req), "ai").allowed) {
+    sendJson(res, 429, { error: "Too many sign-in attempts. Wait a moment and try again." });
+    return;
+  }
+
+  const { token, minutes } = await createLoginLink(email);
+  const link = `${url.origin}/signin?token=${token}`;
+  const delivered = await sendLoginEmail(email, link, minutes);
+
+  if (!delivered) {
+    console.log(`Sign-in link for ${email} (valid ${minutes} minutes): ${link}`);
+  }
+
+  sendJson(res, 200, {
+    sent: true,
+    delivery: delivered ? "email" : "server_log",
+    message: delivered
+      ? `Check ${email} for a sign-in link. It expires in ${minutes} minutes.`
+      : `Email delivery is not configured on this server, so the link was written to the server log. It expires in ${minutes} minutes.`
+  });
+}
+
+async function sendLoginEmail(email, link, minutes) {
+  const apiKey = String(process.env.RESEND_API_KEY || "").trim();
+  const from = String(process.env.LOGIN_EMAIL_FROM || "").trim();
+
+  if (!apiKey || !from) {
+    return false;
+  }
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from,
+        to: [email],
+        subject: "Your Golf Assistant sign-in link",
+        text: `Tap this link to sign in. It expires in ${minutes} minutes.\n\n${link}\n\nIf you did not request this, ignore this email.`
+      })
+    });
+
+    if (!response.ok) {
+      console.error("Sign-in email failed:", response.status, (await response.text()).slice(0, 200));
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Sign-in email error:", error.message);
+    return false;
+  }
+}
+
+async function handleSignInRedemption(req, res, url) {
+  if (!isDatabaseConfigured()) {
+    sendText(res, 404, "Not found", "text/plain");
+    return;
+  }
+
+  const token = url.searchParams.get("token") || "";
+
+  try {
+    const result = await redeemLoginLink(token);
+
+    if (!result) {
+      res.writeHead(303, { Location: "/index.html?signin=expired" });
+      res.end();
+      return;
+    }
+
+    res.writeHead(303, {
+      "Set-Cookie": buildSessionCookie(result.sessionToken, 90 * 24 * 60 * 60),
+      Location: "/index.html?signin=ok"
+    });
+    res.end();
+  } catch (error) {
+    console.error("Sign-in redemption failed:", error.message);
+    res.writeHead(303, { Location: "/index.html?signin=error" });
+    res.end();
+  }
+}
+
+function buildSessionCookie(value, maxAgeSeconds) {
+  const parts = [
+    `golf_session=${value}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${maxAgeSeconds}`
+  ];
+
+  if (process.env.COOKIE_INSECURE !== "true") {
+    parts.push("Secure");
+  }
+
+  return parts.join("; ");
+}
+
+function readSessionCookie(req) {
+  const header = String(req.headers.cookie || "");
+  const match = header.split(";").map(part => part.trim()).find(part => part.startsWith("golf_session="));
+
+  return match ? match.slice("golf_session=".length) : "";
 }
 
 async function handleAdminRequest(req, res) {

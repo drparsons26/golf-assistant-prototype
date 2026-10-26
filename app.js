@@ -152,6 +152,8 @@ const confirmCancelBtn = document.getElementById("confirmCancelBtn");
 let lastYardageHole = null;
 let loadedRoundSavedAt = 0;
 let serverPaused = false;
+let accountsEnabled = false;
+let signedInEmail = "";
 let recognition = null;
 let selectedCourseSetup = null;
 let isHandlingVoiceCommand = false;
@@ -327,6 +329,7 @@ window.addEventListener("load", function () {
   renderUnitPreference();
   renderConnectionState();
   maybeShowResumeBanner();
+  reportSignInRedirect();
   syncWakeLock();
 
   if (round.players.length > 0) {
@@ -1819,6 +1822,7 @@ function endRoundFromVoice() {
   saveScores();
   archiveCurrentRound();
   renderScorecard();
+  syncAccountData(false);
   saveRoundToStorage();
   releaseWakeLock();
   stopLocationWatch();
@@ -5180,6 +5184,9 @@ async function checkServerAccessRequirement() {
     const health = await response.json();
 
     serverRequiresAccessCode = Boolean(health.accessTokenRequired);
+    accountsEnabled = Boolean(health.accountsEnabled);
+    await refreshAccountState();
+    syncAccountData(false);
     renderPausedState(Boolean(health.paused));
 
     if (!serverRequiresAccessCode) {
@@ -6228,6 +6235,254 @@ function renderUnitPreference() {
       element.textContent = unitLabel(true);
     }
   });
+}
+
+// -------------------------------
+// Account and sync
+// -------------------------------
+
+const accountCard = document.getElementById("accountCard");
+const accountHint = document.getElementById("accountHint");
+const accountStatus = document.getElementById("accountStatus");
+const accountSignedOut = document.getElementById("accountSignedOut");
+const accountSignedIn = document.getElementById("accountSignedIn");
+const accountEmailInput = document.getElementById("accountEmailInput");
+const accountEmailLabel = document.getElementById("accountEmailLabel");
+const sendLoginLinkBtn = document.getElementById("sendLoginLinkBtn");
+const syncNowBtn = document.getElementById("syncNowBtn");
+const signOutBtn = document.getElementById("signOutBtn");
+const accountExportBtn = document.getElementById("accountExportBtn");
+const deleteAccountBtn = document.getElementById("deleteAccountBtn");
+
+sendLoginLinkBtn.addEventListener("click", requestLoginLink);
+syncNowBtn.addEventListener("click", function () {
+  syncAccountData(true);
+});
+signOutBtn.addEventListener("click", signOutOfAccount);
+accountExportBtn.addEventListener("click", function () {
+  window.location.href = "/api/account/export";
+});
+deleteAccountBtn.addEventListener("click", deleteAccount);
+
+async function accountFetch(path, options = {}) {
+  const response = await fetch(`/api/account${path}`, {
+    credentials: "same-origin",
+    ...options
+  });
+  const body = await response.json().catch(function () {
+    return {};
+  });
+
+  return { ok: response.ok, status: response.status, body };
+}
+
+async function refreshAccountState() {
+  if (!accountCard) {
+    return;
+  }
+
+  if (!accountsEnabled) {
+    accountHint.textContent = "This server stores nothing. Your rounds stay in this browser.";
+    accountSignedOut.classList.add("hidden");
+    accountSignedIn.classList.add("hidden");
+    accountStatus.textContent = "Device-only mode. Export your data to keep a copy.";
+    return;
+  }
+
+  const { ok, body } = await accountFetch("/");
+
+  if (ok && body.signedIn) {
+    signedInEmail = body.email;
+    accountHint.textContent = "Your rounds, clubs, and shots sync to your account.";
+    accountEmailLabel.textContent = body.email;
+    accountSignedIn.classList.remove("hidden");
+    accountSignedOut.classList.add("hidden");
+    return;
+  }
+
+  signedInEmail = "";
+  accountHint.textContent = "Sign in to back up your data and use it on another device.";
+  accountSignedIn.classList.add("hidden");
+  accountSignedOut.classList.remove("hidden");
+}
+
+async function requestLoginLink() {
+  const email = accountEmailInput.value.trim();
+
+  if (!email) {
+    accountStatus.textContent = "Enter your email address first.";
+    return;
+  }
+
+  accountStatus.textContent = "Sending a sign-in link...";
+
+  const { ok, body } = await accountFetch("/login-link", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: email })
+  });
+
+  accountStatus.textContent = ok
+    ? body.message
+    : body.error || "That sign-in link could not be sent.";
+}
+
+async function signOutOfAccount() {
+  await accountFetch("/signout", { method: "POST" });
+  accountStatus.textContent = "Signed out. Your data is still on this device.";
+  await refreshAccountState();
+}
+
+async function deleteAccount() {
+  const confirmed = await confirmAction(
+    "Delete your account and everything stored on the server? Data on this device is not affected.",
+    "Delete account"
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  const { ok, body } = await accountFetch("/", { method: "DELETE" });
+
+  accountStatus.textContent = ok
+    ? "Account deleted. Your device data is untouched."
+    : body.error || "That account could not be deleted.";
+  await refreshAccountState();
+}
+
+function buildSyncPayload() {
+  return {
+    clubs: getClubProfile().clubs,
+    shots: getShotLog().map(shot => ({
+      ...shot,
+      id: shot.id || `${shot.time}-${shot.club}-${shot.distanceYards}`
+    })),
+    rounds: getRoundHistory(),
+    courses: getSavedCourseSetups().map(course => ({
+      id: course.id,
+      courseName: course.courseName,
+      teeName: course.teeName,
+      totalHoles: course.totalHoles,
+      holePars: course.holePars,
+      holeLengths: course.holeLengths,
+      holeTargets: course.holeTargets,
+      holeHazards: course.holeHazards,
+      source: course.source
+    }))
+  };
+}
+
+function mergeSyncedData(data) {
+  if (!data) {
+    return;
+  }
+
+  if (Array.isArray(data.clubs) && data.clubs.length > 0) {
+    saveClubProfile(data.clubs.map(entry => ({
+      club: normalizeClubName(entry.club),
+      carryYards: Number(entry.carryYards)
+    })).filter(entry => entry.club && isValidCarryDistance(entry.carryYards)));
+  }
+
+  if (Array.isArray(data.shots)) {
+    const seen = new Set(getShotLog().map(shot => shot.id || `${shot.time}-${shot.club}-${shot.distanceYards}`));
+    const merged = getShotLog().slice();
+
+    data.shots.forEach(shot => {
+      const key = shot.id || `${shot.time}-${shot.club}-${shot.distanceYards}`;
+
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push({ ...shot, id: key });
+      }
+    });
+
+    merged.sort((a, b) => new Date(a.time) - new Date(b.time));
+    saveShotLog(merged);
+  }
+
+  if (Array.isArray(data.rounds)) {
+    const existing = getRoundHistory();
+    const seen = new Set(existing.map(entry => entry.id));
+    const merged = existing.slice();
+
+    data.rounds.forEach(entry => {
+      if (!seen.has(entry.id)) {
+        seen.add(entry.id);
+        merged.push(entry);
+      }
+    });
+
+    merged.sort((a, b) => new Date(a.finishedAt) - new Date(b.finishedAt));
+    saveRoundHistory(merged);
+  }
+
+  if (Array.isArray(data.courses)) {
+    const existing = getSavedCourseSetups();
+    const byId = new Map(existing.map(course => [course.id, course]));
+
+    data.courses.forEach(course => {
+      if (!byId.has(course.id)) {
+        byId.set(course.id, { ...course, savedAt: new Date().toISOString() });
+      }
+    });
+
+    saveCourseSetupsToStorage(Array.from(byId.values()));
+    renderSavedCourseOptions();
+  }
+
+  renderRoundHistory();
+  renderShotHistorySummary();
+  renderClubProfileEditor();
+  renderHomeSummary();
+}
+
+async function syncAccountData(showStatus = false) {
+  if (!accountsEnabled || !signedInEmail || !isOnline()) {
+    return false;
+  }
+
+  if (showStatus) {
+    accountStatus.textContent = "Syncing...";
+  }
+
+  const { ok, body } = await accountFetch("/sync", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(buildSyncPayload())
+  });
+
+  if (!ok) {
+    accountStatus.textContent = body.error || "Sync failed. Your data is safe on this device.";
+    return false;
+  }
+
+  mergeSyncedData(body.data);
+  accountStatus.textContent =
+    `Synced ${body.data.rounds.length} round${body.data.rounds.length === 1 ? "" : "s"}, ` +
+    `${body.data.shots.length} shot${body.data.shots.length === 1 ? "" : "s"}, and ` +
+    `${body.data.clubs.length} club distance${body.data.clubs.length === 1 ? "" : "s"}.`;
+  return true;
+}
+
+function reportSignInRedirect() {
+  const params = new URLSearchParams(window.location.search);
+  const state = params.get("signin");
+
+  if (!state) {
+    return;
+  }
+
+  if (state === "ok") {
+    notify("Signed in. Syncing your data now.");
+  } else if (state === "expired") {
+    notify("That sign-in link expired. Request a new one.");
+  } else {
+    notify("That sign-in link could not be used.");
+  }
+
+  window.history.replaceState({}, "", window.location.pathname);
 }
 
 // -------------------------------
