@@ -1,4 +1,4 @@
-const CACHE_NAME = "golf-assistant-cache-v25";
+const CACHE_NAME = "golf-assistant-cache-v26";
 
 const FILES_TO_CACHE = [
   "./",
@@ -6,10 +6,25 @@ const FILES_TO_CACHE = [
   "./style.css",
   "./app.js",
   "./manifest.webmanifest",
+  "./privacy.html",
+  "./terms.html",
   "./icons/icons.svg",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
 ];
+
+const CACHEABLE_PATHS = new Set([
+  "/",
+  "/index.html",
+  "/style.css",
+  "/app.js",
+  "/manifest.webmanifest",
+  "/privacy.html",
+  "/terms.html",
+  "/icons/icons.svg",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png"
+]);
 
 self.addEventListener("install", function (event) {
   event.waitUntil(
@@ -42,7 +57,8 @@ self.addEventListener("fetch", function (event) {
 
   if (event.request.method !== "GET" ||
     requestUrl.origin !== self.location.origin ||
-    requestUrl.pathname.startsWith("/api/")) {
+    requestUrl.search ||
+    !CACHEABLE_PATHS.has(requestUrl.pathname)) {
     return;
   }
 
@@ -61,7 +77,13 @@ self.addEventListener("fetch", function (event) {
       })
       .catch(function () {
         return caches.match(event.request).then(function (cachedResponse) {
-          return cachedResponse || caches.match("./index.html");
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+
+          return event.request.mode === "navigate"
+            ? caches.match("./index.html")
+            : Response.error();
         });
       })
   );

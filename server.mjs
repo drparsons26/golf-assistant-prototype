@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeEqual, createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -28,8 +28,12 @@ const host = process.env.HOST || "0.0.0.0";
 const model = process.env.OPENAI_MODEL || "gpt-5-mini";
 const golfApiBaseUrl = process.env.GOLFAPI_BASE_URL || "https://golfapi.io/api/v2.3";
 const allowedGolfApiResources = new Set(["clubs", "courses", "coordinates"]);
+const allowedGolfApiParams = new Set(["city", "country", "name", "state", "measureUnit", "page", "limit"]);
 
 const accessToken = String(process.env.APP_ACCESS_TOKEN || "").trim();
+const accessCookieValue = accessToken
+  ? createHash("sha256").update(accessToken).digest("base64url")
+  : "";
 const adminToken = String(process.env.ADMIN_TOKEN || "").trim();
 const rateLimits = {
   ai: {
@@ -43,17 +47,26 @@ const rateLimits = {
     windowLimit: Number(process.env.GOLFAPI_WINDOW_REQUEST_LIMIT || 60),
     dailyLimit: Number(process.env.GOLFAPI_DAILY_REQUEST_LIMIT || 600),
     globalDailyLimit: Number(process.env.GOLFAPI_GLOBAL_DAILY_LIMIT || 2000)
+  },
+  // Sign-in and account traffic gets its own counters so a flood cannot
+  // drain the AI budget that the paid endpoints depend on.
+  auth: {
+    windowMs: 15 * 60 * 1000,
+    windowLimit: Number(process.env.AUTH_WINDOW_REQUEST_LIMIT || 12),
+    dailyLimit: Number(process.env.AUTH_DAILY_REQUEST_LIMIT || 60),
+    globalDailyLimit: Number(process.env.AUTH_GLOBAL_DAILY_LIMIT || 2000)
   }
 };
 const rateLimitBuckets = new Map();
 const dailyCounters = new Map();
-const globalDailyCounters = { ai: 0, golfapi: 0 };
+const globalDailyCounters = { ai: 0, golfapi: 0, auth: 0 };
 let dailyCounterDay = currentUtcDay();
 let apiPaused = String(process.env.API_PAUSED || "").trim().toLowerCase() === "true";
 let pausedReason = apiPaused ? "Paused at startup by API_PAUSED." : "";
 const golfApiCache = new Map();
 const GOLFAPI_CACHE_MAX_ENTRIES = 120;
 const GOLFAPI_CACHE_MAX_BYTES = 1024 * 1024;
+const GOLFAPI_RESPONSE_MAX_BYTES = 4 * 1024 * 1024;
 
 const publicFiles = new Set([
   "index.html",
@@ -61,7 +74,6 @@ const publicFiles = new Set([
   "style.css",
   "manifest.webmanifest",
   "service-worker.js",
-  "make-icons.html",
   "privacy.html",
   "terms.html"
 ]);
@@ -83,15 +95,20 @@ createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
     if (req.method === "GET" && url.pathname === "/api/health") {
+      // Only what the browser needs to render itself; model and provider-key
+      // state are operator information, not public reconnaissance material.
       sendJson(res, 200, {
         ok: true,
-        model,
-        openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
-        golfApiConfigured: Boolean(process.env.GOLFAPI_API_KEY),
         accessTokenRequired: accessToken !== "",
+        accessGranted: hasValidAccessToken(req),
         paused: apiPaused,
         accountsEnabled: isDatabaseConfigured()
       });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/access") {
+      await handleAccessCodeRequest(req, res);
       return;
     }
 
@@ -100,7 +117,7 @@ createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "GET" && url.pathname === "/signin") {
+    if ((req.method === "GET" || req.method === "POST") && url.pathname === "/signin") {
       await handleSignInRedemption(req, res, url);
       return;
     }
@@ -231,8 +248,19 @@ async function handleAccountRequest(req, res, url) {
     });
     return;
   }
+  if (req.method !== "GET" && !isTrustedMutation(req, url)) {
+    sendJson(res, 403, { error: "Cross-site account requests are not allowed." });
+    return;
+  }
+
 
   const route = url.pathname.replace("/api/account", "") || "/";
+
+  if (route !== "/login-link" && !checkRateLimit(getClientKey(req), "auth").allowed) {
+    res.setHeader("Retry-After", "60");
+    sendJson(res, 429, { code: "rate_limited", error: "Too many account requests. Wait a moment and try again." });
+    return;
+  }
 
   try {
     if (req.method === "POST" && route === "/login-link") {
@@ -307,14 +335,24 @@ async function handleLoginLinkRequest(req, res, url) {
     return;
   }
 
-  if (!checkRateLimit(getClientKey(req), "ai").allowed) {
+  if (!checkRateLimit(getClientKey(req), "auth").allowed) {
     sendJson(res, 429, { error: "Too many sign-in attempts. Wait a moment and try again." });
     return;
   }
 
-  const { token, minutes } = await createLoginLink(email);
-  const protocol = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() || url.protocol.replace(":", "");
-  const link = `${protocol}://${url.host}/signin?token=${token}`;
+  const baseUrl = publicBaseUrl(req, url);
+
+  const created = await createLoginLink(email);
+
+  if (!created) {
+    sendJson(res, 429, {
+      error: "There are already unused sign-in links for that address. Use the newest one or wait for it to expire."
+    });
+    return;
+  }
+
+  const { token, minutes } = created;
+  const link = `${baseUrl}/signin?token=${encodeURIComponent(token)}`;
   const delivered = await sendLoginEmail(email, link, minutes);
 
   if (!delivered) {
@@ -365,38 +403,146 @@ async function sendLoginEmail(email, link, minutes) {
   }
 }
 
+// A cookie-setting GET can be triggered by any third-party page (an <img> tag
+// is enough), which would plant an attacker's session in the victim's browser
+// and silently sync their data into the attacker's account. Redemption
+// therefore requires a same-site POST the wearer actually clicks.
 async function handleSignInRedemption(req, res, url) {
   if (!isDatabaseConfigured()) {
     sendText(res, 404, "Not found", "text/plain");
     return;
   }
 
-  const token = url.searchParams.get("token") || "";
+  if (req.method === "GET") {
+    const token = url.searchParams.get("token") || "";
+
+    sendText(res, 200, renderSignInConfirmPage(token), "text/html");
+    return;
+  }
+
+  if (req.method !== "POST") {
+    sendJson(res, 405, { error: "Method not allowed." });
+    return;
+  }
+
+  const site = String(req.headers["sec-fetch-site"] || "").toLowerCase();
+
+  if (site && site !== "same-origin" && site !== "same-site" && site !== "none") {
+    sendText(res, 403, "Cross-site sign-in is not allowed.", "text/plain");
+    return;
+  }
+
+  if (!checkRateLimit(getClientKey(req), "auth").allowed) {
+    sendText(res, 429, "Too many sign-in attempts. Wait a moment and try again.", "text/plain");
+    return;
+  }
+
+  let body;
+
+  try {
+    body = await readFormBody(req, 4 * 1024);
+  } catch {
+    body = new URLSearchParams();
+  }
+
+  const token = body.get("token") || "";
 
   try {
     const result = await redeemLoginLink(token);
 
     if (!result) {
-      res.writeHead(303, { Location: "/index.html?signin=expired" });
+      res.writeHead(303, { ...securityHeaders(), Location: "/index.html?signin=expired" });
       res.end();
       return;
     }
 
     res.writeHead(303, {
+      ...securityHeaders(),
       "Set-Cookie": buildSessionCookie(result.sessionToken, 90 * 24 * 60 * 60),
       Location: "/index.html?signin=ok"
     });
     res.end();
   } catch (error) {
     console.error("Sign-in redemption failed:", error.message);
-    res.writeHead(303, { Location: "/index.html?signin=error" });
+    res.writeHead(303, { ...securityHeaders(), Location: "/index.html?signin=error" });
     res.end();
   }
 }
 
+function renderSignInConfirmPage(token) {
+  const safeToken = String(token).replace(/[^A-Za-z0-9_-]/g, "");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Finish signing in — Golf Assistant</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="app-shell">
+  <main class="app-main legal-page">
+    <div class="page-head"><div><h2>Finish signing in</h2><p>Confirm to sign in to Golf Assistant on this device.</p></div></div>
+    <form class="card legal-body" method="POST" action="/signin">
+      <input type="hidden" name="token" value="${safeToken}" />
+      <p>Only continue if you asked for this sign-in link.</p>
+      <button class="btn btn-primary btn-block btn-lg" type="submit">Sign in on this device</button>
+    </form>
+    <div class="card legal-body"><p><a href="/index.html">Cancel and go back</a></p></div>
+  </main>
+</div>
+</body>
+</html>`;
+}
+
+function publicBaseUrl(req, url) {
+  const configured = String(process.env.PUBLIC_BASE_URL || "").trim();
+
+  if (configured) {
+    const parsed = new URL(configured);
+
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      throw new Error("PUBLIC_BASE_URL must use http or https.");
+    }
+
+    return parsed.origin;
+  }
+
+  if (url.hostname !== "localhost" && url.hostname !== "127.0.0.1") {
+    throw new Error("PUBLIC_BASE_URL is required for non-local sign-in links.");
+  }
+
+  return url.origin;
+}
+
 function buildSessionCookie(value, maxAgeSeconds) {
+  return buildCookie("golf_session", value, maxAgeSeconds);
+}
+
+function readCookie(req, name) {
+  const header = String(req.headers.cookie || "");
+  const prefix = `${name}=`;
+  const match = header.split(";").map(part => part.trim()).find(part => part.startsWith(prefix));
+
+  if (!match) {
+    return "";
+  }
+
+  try {
+    return decodeURIComponent(match.slice(prefix.length));
+  } catch {
+    return "";
+  }
+}
+
+function readSessionCookie(req) {
+  return readCookie(req, "golf_session");
+}
+
+function buildCookie(name, value, maxAgeSeconds) {
   const parts = [
-    `golf_session=${value}`,
+    `${name}=${encodeURIComponent(value)}`,
     "Path=/",
     "HttpOnly",
     "SameSite=Lax",
@@ -410,11 +556,94 @@ function buildSessionCookie(value, maxAgeSeconds) {
   return parts.join("; ");
 }
 
-function readSessionCookie(req) {
-  const header = String(req.headers.cookie || "");
-  const match = header.split(";").map(part => part.trim()).find(part => part.startsWith("golf_session="));
+function isTrustedMutation(req, url) {
+  const site = String(req.headers["sec-fetch-site"] || "").toLowerCase();
 
-  return match ? match.slice("golf_session=".length) : "";
+  if (site && site !== "same-origin" && site !== "same-site" && site !== "none") {
+    return false;
+  }
+
+  const origin = String(req.headers.origin || "").trim();
+
+  if (!origin) {
+    return true;
+  }
+
+  try {
+    return new URL(origin).origin === new URL(publicBaseUrl(req, url)).origin;
+  } catch {
+    return false;
+  }
+}
+
+function readFormBody(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+
+    req.on("data", chunk => {
+      size += chunk.length;
+
+      if (size > maxBytes) {
+        reject(new Error("Request body is too large."));
+        req.destroy();
+        return;
+      }
+
+      chunks.push(chunk);
+    });
+
+    req.on("end", () => {
+      resolve(new URLSearchParams(Buffer.concat(chunks).toString("utf8")));
+    });
+
+    req.on("error", reject);
+  });
+}
+
+// The shared access code used to live in localStorage, where any injected
+// script could read it. The browser now exchanges it for an HttpOnly cookie
+// and never holds the secret itself.
+async function handleAccessCodeRequest(req, res) {
+  const site = String(req.headers["sec-fetch-site"] || "").toLowerCase();
+
+  if (site && site !== "same-origin" && site !== "same-site" && site !== "none") {
+    sendJson(res, 403, { error: "Cross-site access changes are not allowed." });
+    return;
+  }
+
+  if (!checkRateLimit(getClientKey(req), "auth").allowed) {
+    sendJson(res, 429, { error: "Too many attempts. Wait a moment and try again." });
+    return;
+  }
+
+  let body;
+
+  try {
+    body = await readJsonBody(req, 4 * 1024);
+  } catch (error) {
+    sendJson(res, 400, { error: error.message });
+    return;
+  }
+
+  if (body && body.clear === true) {
+    res.setHeader("Set-Cookie", buildCookie("golf_access", "", 0));
+    sendJson(res, 200, { accepted: false, required: accessToken !== "" });
+    return;
+  }
+
+  if (!accessToken) {
+    sendJson(res, 200, { accepted: true, required: false });
+    return;
+  }
+
+  if (!secretsMatch(String((body && body.code) || "").trim(), accessToken)) {
+    sendJson(res, 401, { code: "access_code_required", error: "That access code is not correct." });
+    return;
+  }
+
+  res.setHeader("Set-Cookie", buildCookie("golf_access", accessCookieValue, 180 * 24 * 60 * 60));
+  sendJson(res, 200, { accepted: true, required: true });
 }
 
 async function handleAdminRequest(req, res) {
@@ -424,10 +653,9 @@ async function handleAdminRequest(req, res) {
   }
 
   const provided = String(req.headers["x-admin-token"] || "").trim();
-  const matches = provided.length === adminToken.length &&
-    timingSafeEqual(Buffer.from(provided), Buffer.from(adminToken));
 
-  if (!matches) {
+  if (!secretsMatch(provided, adminToken)) {
+    console.warn(`Admin auth failure from ${getClientKey(req)}.`);
     sendJson(res, 401, { error: "Admin token required." });
     return;
   }
@@ -482,19 +710,41 @@ function hasValidAccessToken(req) {
     return true;
   }
 
-  const provided = String(req.headers["x-app-token"] || "").trim();
+  const header = String(req.headers["x-app-token"] || "").trim();
+  const cookie = readCookie(req, "golf_access");
 
-  if (provided.length !== accessToken.length) {
+  return secretsMatch(header, accessToken) || secretsMatch(cookie, accessCookieValue);
+}
+
+// Comparing raw strings leaks length and throws a RangeError on multi-byte
+// input of equal character count. Digests are always the same byte length.
+function secretsMatch(provided, expected) {
+  if (!provided || !expected) {
     return false;
   }
 
-  return timingSafeEqual(Buffer.from(provided), Buffer.from(accessToken));
+  const providedDigest = createHash("sha256").update(String(provided)).digest();
+  const expectedDigest = createHash("sha256").update(String(expected)).digest();
+
+  return timingSafeEqual(providedDigest, expectedDigest);
 }
 
+// Trust forwarded addresses only when the deployment explicitly declares how
+// many reverse-proxy hops it controls. Direct deployments default to the socket.
 function getClientKey(req) {
-  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  const hops = Math.max(0, Math.floor(Number(process.env.TRUSTED_PROXY_HOPS) || 0));
+  const chain = String(req.headers["x-forwarded-for"] || "")
+    .split(",")
+    .map(part => part.trim())
+    .filter(Boolean);
 
-  return forwarded || req.socket.remoteAddress || "unknown";
+  if (hops > 0 && chain.length > 0) {
+    const index = Math.max(0, chain.length - hops);
+
+    return chain[index] || req.socket.remoteAddress || "unknown";
+  }
+
+  return req.socket.remoteAddress || "unknown";
 }
 
 function checkRateLimit(clientKey, limitName) {
@@ -543,6 +793,7 @@ function rollDailyCountersIfNeeded() {
     dailyCounters.clear();
     globalDailyCounters.ai = 0;
     globalDailyCounters.golfapi = 0;
+    globalDailyCounters.auth = 0;
   }
 }
 
@@ -686,8 +937,10 @@ async function handleGolfApiRequest(url, res) {
   const upstreamPath = resourceId ? `${resource}/${resourceId}` : resource;
   const upstreamUrl = new URL(`${golfApiBaseUrl.replace(/\/+$/g, "")}/${upstreamPath}`);
 
+  // Only forward parameters the app actually uses. Arbitrary parameters let a
+  // caller bust the cache and spend provider quota at will.
   url.searchParams.forEach((value, key) => {
-    if (value !== "") {
+    if (value !== "" && allowedGolfApiParams.has(key) && value.length <= 80) {
       upstreamUrl.searchParams.set(key, value);
     }
   });
@@ -705,34 +958,31 @@ async function handleGolfApiRequest(url, res) {
       headers: {
         "Authorization": `Bearer ${process.env.GOLFAPI_API_KEY}`,
         "Accept": "application/json"
-      }
+      },
+      signal: AbortSignal.timeout(15000)
     });
 
-    const bodyText = await response.text();
+    const bodyText = await readLimitedResponseText(response, GOLFAPI_RESPONSE_MAX_BYTES);
 
     if (!response.ok) {
-      let message = "GOLFAPI request failed.";
-
-      try {
-        const body = JSON.parse(bodyText);
-        message = body.message || body.error || message;
-      } catch {
-        if (bodyText) {
-          message = bodyText;
-        }
-      }
-
-      sendJson(res, response.status, { error: message });
+      console.error(`GOLFAPI ${resource} responded ${response.status}.`);
+      sendJson(res, 502, { error: "The course data provider could not answer that request." });
       return;
     }
 
-    const contentType = response.headers.get("content-type") || "application/json";
-    const body = bodyText || "{}";
+    let body;
 
-    writeGolfApiCache(cacheKey, resource, body, contentType);
-    sendText(res, 200, body, contentType);
+    try {
+      body = JSON.stringify(JSON.parse(bodyText || "{}"));
+    } catch {
+      sendJson(res, 502, { error: "The course data provider returned invalid data." });
+      return;
+    }
+
+    writeGolfApiCache(cacheKey, resource, body, "application/json");
+    sendText(res, 200, body, "application/json");
   } catch (error) {
-    console.error("GOLFAPI proxy error:", error);
+    console.error("GOLFAPI proxy error:", error.message);
     sendJson(res, 502, { error: "Could not reach GOLFAPI." });
   }
 }
@@ -753,7 +1003,7 @@ function readGolfApiCache(key) {
 }
 
 function writeGolfApiCache(key, resource, body, contentType) {
-  if (body.length > GOLFAPI_CACHE_MAX_BYTES) {
+  if (Buffer.byteLength(body, "utf8") > GOLFAPI_CACHE_MAX_BYTES) {
     return;
   }
 
@@ -768,6 +1018,35 @@ function writeGolfApiCache(key, resource, body, contentType) {
     contentType: contentType,
     expiresAt: Date.now() + ttlMs
   });
+}
+
+async function readLimitedResponseText(response, maxBytes) {
+  if (!response.body) {
+    return "";
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    size += value.byteLength;
+
+    if (size > maxBytes) {
+      await reader.cancel();
+      throw new Error("Upstream response was too large.");
+    }
+
+    chunks.push(Buffer.from(value));
+  }
+
+  return Buffer.concat(chunks, size).toString("utf8");
 }
 
 async function serveStaticFile(pathname, res) {
@@ -1043,8 +1322,31 @@ function sendJson(res, status, value) {
   sendText(res, status, JSON.stringify(value), "application/json");
 }
 
+function securityHeaders() {
+  return {
+    "Content-Security-Policy": [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self'",
+      "img-src 'self' data:",
+      "connect-src 'self'",
+      "font-src 'self'",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+      "base-uri 'none'",
+      "form-action 'self'"
+    ].join("; "),
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "geolocation=(self), microphone=(self), camera=(), payment=()",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains"
+  };
+}
+
 function sendText(res, status, text, contentType) {
   res.writeHead(status, {
+    ...securityHeaders(),
     "Content-Type": contentType,
     "Cache-Control": "no-store"
   });
@@ -1053,7 +1355,9 @@ function sendText(res, status, text, contentType) {
 
 function sendBuffer(res, status, body, contentType) {
   res.writeHead(status, {
-    "Content-Type": contentType
+    ...securityHeaders(),
+    "Content-Type": contentType,
+    "Cache-Control": "no-cache"
   });
   res.end(body);
 }

@@ -11,16 +11,42 @@ services:
     envVars:
       - key: HOST
         value: 0.0.0.0
+      - key: PUBLIC_BASE_URL
+        value: https://golf-assistant-prototype.onrender.com
+      - key: TRUSTED_PROXY_HOPS
+        value: 1
       - key: OPENAI_MODEL
         value: gpt-5-mini
       - key: OPENAI_TRANSCRIBE_MODEL
         value: gpt-4o-mini-transcribe
       - key: GOLFAPI_BASE_URL
         value: https://golfapi.io/api/v2.3
+      - key: AI_GLOBAL_DAILY_LIMIT
+        value: 1500
+      - key: GOLFAPI_GLOBAL_DAILY_LIMIT
+        value: 2000
+      - key: AUTH_WINDOW_REQUEST_LIMIT
+        value: 12
+      - key: AUTH_DAILY_REQUEST_LIMIT
+        value: 60
+      - key: AUTH_GLOBAL_DAILY_LIMIT
+        value: 2000
+      - key: API_PAUSED
+        value: false
       # Secrets are set in the Render dashboard or through the API, never here.
       - key: OPENAI_API_KEY
         sync: false
       - key: GOLFAPI_API_KEY
         sync: false
       - key: APP_ACCESS_TOKEN
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_CA_CERT
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: LOGIN_EMAIL_FROM
         sync: false

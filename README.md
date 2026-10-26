@@ -139,7 +139,7 @@ The Active Round screen has a shot log. Each entry records club, distance, resul
 
 After a club recommendation, the shot-log club and distance fields are prefilled so logging the shot takes one tap.
 
-### Persistence and Installable Web App
+### Persistence, Accounts, and Installable Web App
 
 - `golfRound` stores round state in browser local storage.
 - `golfCourseSetups` stores the local course library.
@@ -147,12 +147,11 @@ After a club recommendation, the shot-log club and distance fields are prefilled
 - `golfShotLog` stores logged shots, including miss direction, and drives learned club distances and miss tendencies.
 - `golfRoundHistory` stores finished rounds with scores, pars, and per-hole stats.
 - `golfDistanceUnit` stores the yards or meters preference.
-- `golfAppAccessToken` stores this device's server access code.
+- The server access grant is an `HttpOnly` cookie; the shared access code itself is not kept in browser-readable storage.
 - A web manifest and icons support adding the app to a phone's home screen.
-- The service worker serves network-first with a cached fallback, so a new deployment is picked up on the next load while cached assets still support offline use.
-- API requests bypass the service worker entirely.
+- The service worker caches only the explicit public app assets, network-first, and never caches API or sign-in URLs.
 
-There is no shared database, sign-in, or cross-device sync yet. Data saved on one browser does not automatically appear on another device. Clearing browser storage can remove rounds and courses. Export course setups to retain a separate copy. Cached frontend assets can support some offline use, but OpenAI and live GOLFAPI requests require internet access.
+Browser storage remains the source of truth during a round. Optional passwordless accounts sync finished rounds, saved courses, club distances, and shot history to PostgreSQL for recovery and cross-device use; the active round stays local until it is finished. Without an account, data remains on that browser and clearing site data can remove it. The export controls provide a separate copy. OpenAI and live GOLFAPI requests require internet access.
 
 ## How It Works
 
@@ -167,6 +166,7 @@ Phone or desktop browser
 
 Course search/load -> Node backend -> GOLFAPI -> local course setup
 GPS yardage       -> browser location + saved coordinates -> distance
+Optional account  -> passwordless email link -> PostgreSQL sync/export/delete
 ```
 
 The backend uses Node's built-in HTTP server and `fetch`. Its only dependency is `pg`, the PostgreSQL driver used when accounts are enabled. Frontend code is plain HTML, CSS, and JavaScript.
@@ -203,10 +203,13 @@ Use a recent Node.js installation with built-in `fetch`, `FormData`, and `Blob` 
    GOLFAPI_BASE_URL=https://golfapi.io/api/v2.3
    PORT=3000
    HOST=0.0.0.0
+   PUBLIC_BASE_URL=http://localhost:3000
+   TRUSTED_PROXY_HOPS=0
    APP_ACCESS_TOKEN=choose_a_long_random_access_code
+   DATABASE_URL=
    ```
 
-   `APP_ACCESS_TOKEN` is the shared access code for the API endpoints. When it is set, the app will not reach OpenAI or GOLFAPI until the same code is saved under **Settings → Server Access** in the browser. Leaving it blank keeps the endpoints open, which is only appropriate for local use on a trusted network. The request ceilings in `.env.example` (`AI_WINDOW_REQUEST_LIMIT`, `AI_DAILY_REQUEST_LIMIT`, `GOLFAPI_WINDOW_REQUEST_LIMIT`, `GOLFAPI_DAILY_REQUEST_LIMIT`) are optional overrides.
+   `APP_ACCESS_TOKEN` is the shared access code for paid API endpoints. The Settings form exchanges it for an `HttpOnly` access cookie; the browser does not retain the code in `localStorage`. Leaving it blank keeps the endpoints open, which is appropriate only for local use on a trusted network. `DATABASE_URL` enables optional accounts and sync. `PUBLIC_BASE_URL` is required with accounts on a non-local deployment so sign-in links never depend on an untrusted request host. Keep `TRUSTED_PROXY_HOPS=0` for a direct server; Render uses `1`. `.env.example` documents the per-client, server-wide, admin, email, and database TLS options.
 
 4. Start the single app server:
 
@@ -224,7 +227,7 @@ Use a recent Node.js installation with built-in `fetch`, `FormData`, and `Blob` 
 
 The backend serves the frontend and API together. A separate static server on port 8000 is not needed and will not provide the AI endpoints. Restart the Node process after changing `.env`.
 
-Check [http://127.0.0.1:3000/api/health](http://127.0.0.1:3000/api/health) to see whether the server is running and whether keys are configured. Configuration booleans indicate that values exist, not that provider authentication has succeeded.
+`GET /api/health` is the smoke endpoint. It reports only the state needed by the browser: whether the service is up, whether an access grant is required and present, whether paid endpoints are paused, and whether accounts are enabled.
 
 ## Render Deployment and Phone Testing
 
@@ -233,7 +236,7 @@ The app runs as a Render Node web service: `golf-assistant-prototype` (`srv-d9nr
 1. Connect the service to this repository and the intended branch, normally `main`.
 2. Set the service root directory to the folder containing `package.json` and `server.mjs`. Leave it blank if those files are at the repository root.
 3. Use `npm install` as the build command and `npm start` as the start command.
-4. Set `OPENAI_API_KEY`, `GOLFAPI_API_KEY`, `APP_ACCESS_TOKEN`, and any model or rate-limit overrides in Render's environment settings. Keep `HOST=0.0.0.0`; the server reads the port provided by the host.
+4. Set `OPENAI_API_KEY`, `GOLFAPI_API_KEY`, `APP_ACCESS_TOKEN`, `ADMIN_TOKEN`, and any limit overrides in Render. Set `PUBLIC_BASE_URL=https://golf-assistant-prototype.onrender.com` and `TRUSTED_PROXY_HOPS=1`. `DATABASE_URL`, `RESEND_API_KEY`, and `LOGIN_EMAIL_FROM` enable account sync and emailed sign-in links. Keep `HOST=0.0.0.0`; Render supplies `PORT`.
 5. Deploy, then open the service's HTTPS URL on the phone and allow microphone/location access when using those features.
 
 Local edits do not change Render. Commit and push them to the connected branch. If automatic deployment is enabled, Render then builds the new commit; otherwise trigger a manual deployment. Check the deployed commit and deployment status in Render before testing.
@@ -285,14 +288,16 @@ A deployed build is only confirmed when `/api/health` responds and the deploy's 
 
 | Endpoint | Behavior |
 | --- | --- |
-| `GET /api/health` | Reports server status, model, key configuration booleans, whether an access code is required, and whether the service is paused |
+| `GET /api/health` | Reports the browser-facing service, access, pause, and account state |
+| `POST /api/access` | Exchanges or clears the shared access code using an `HttpOnly` cookie |
 | `POST /api/voice-agent` | Accepts transcript, round state, and optional client metadata; returns a structured action |
 | `POST /api/transcribe` | Accepts recorded audio and returns a transcript |
 | `GET /api/golfapi/clubs[/:id]` | Proxies club search or details |
 | `GET /api/golfapi/courses[/:id]` | Proxies course data |
 | `GET /api/golfapi/coordinates[/:id]` | Proxies mapped course points |
 | `POST /api/account/login-link` | Emails (or logs) a single-use sign-in link |
-| `GET /signin?token=` | Redeems a sign-in link and sets the session cookie |
+| `GET /signin?token=` | Shows a confirmation page without setting a cookie |
+| `POST /signin` | Redeems a confirmed sign-in link and sets the session cookie |
 | `GET /api/account` | Reports whether this device is signed in |
 | `POST /api/account/sync` | Pushes device data and returns the merged account data |
 | `GET /api/account/export` | Downloads everything in the account as JSON |
@@ -300,16 +305,15 @@ A deployed build is only confirmed when `/api/health` responds and the deploy's 
 | `POST /api/account/signout` | Clears the session |
 | `GET /api/admin/usage` | Reports today's server-wide usage against the ceilings (admin token required) |
 | `POST /api/admin/usage` | Pauses or resumes the paid endpoints (admin token required) |
-
 Voice-agent JSON bodies are limited to 256 KiB and audio bodies to 12 MiB. OpenAI and GOLFAPI credentials are used by the backend for upstream requests.
 
 ### Access Control and Rate Limits
 
-`/api/voice-agent`, `/api/transcribe`, and the GOLFAPI proxy require the `X-App-Token` header to match `APP_ACCESS_TOKEN` when that variable is set. A missing or wrong code returns `401` with `code: "access_code_required"`, which the app shows as an access-code message rather than a provider error. `/api/health` stays open so the app can report whether a code is needed.
+`/api/voice-agent`, `/api/transcribe`, and the GOLFAPI proxy require an access grant when `APP_ACCESS_TOKEN` is set. The browser submits the code once to `/api/access` and receives an `HttpOnly`, `SameSite=Lax`, `Secure` cookie containing a one-way digest, not the shared code. Programmatic clients can still send the code in `X-App-Token`. A missing or wrong grant returns `401` with `code: "access_code_required"`. `/api/health` stays open but exposes no model or provider-key details.
 
-Each client, identified by `X-Forwarded-For` or the socket address, gets a rolling five-minute window limit and a daily limit per endpoint group: 30 per window and 400 per day for the AI endpoints, 60 per window and 600 per day for the GOLFAPI proxy. Exceeding either returns `429` with a `Retry-After` header. Counters live in server memory, so a restart or a second instance resets them.
+AI, GOLFAPI, and account/auth traffic use separate in-memory counters. Defaults are 30 AI requests per rolling five minutes and 400 per client/day; 60 GOLFAPI requests per five minutes and 600/day; and 12 account/auth requests per 15 minutes and 60/day. Exceeding a limit returns `429`. `TRUSTED_PROXY_HOPS` must match the deployment; forwarded addresses are ignored by default so a direct client cannot rotate a forged `X-Forwarded-For` value. A restart or second instance resets these counters.
 
-Successful GOLFAPI responses are cached in server memory, keyed by the full upstream URL: 30 minutes for club searches and 12 hours for course and coordinate data, capped at 120 entries and 1 MiB per entry. Repeating a course load therefore costs no provider quota. The browser also caches each loaded course bundle for the session, so switching between tees or courses does not refetch.
+The GOLFAPI proxy forwards only the query parameters the app uses, limits identifiers and response size, requires valid JSON, and caches successful responses in memory: 30 minutes for club searches and 12 hours for course and coordinate data, capped at 120 entries and 1 MiB per entry. The browser also caches a loaded course bundle for the session.
 
 Each AI-first voice request can incur OpenAI usage; recorded-audio transcription can incur separate usage. Reusing locally saved targets permits GPS calculations without refetching the course.
 
@@ -337,22 +341,19 @@ curl -s -X POST -H "x-admin-token: $ADMIN" -H "Content-Type: application/json" \
 
 `/api/admin/usage` returns `404` when `ADMIN_TOKEN` is unset and `401` without a matching `x-admin-token` header. `/api/health` reports `paused` so the app can show a banner. Counters and the paused flag live in server memory: a restart clears the counters and reverts to the `API_PAUSED` environment value, so treat a runtime pause as temporary and set the variable in Render for anything lasting.
 
-### Static File Serving
+### Static File Serving and Browser Security
 
-The server does not serve arbitrary files from the project directory. It serves only an explicit public allowlist:
+The server does not serve arbitrary files from the project directory. It serves only `index.html`, `app.js`, `style.css`, `manifest.webmanifest`, `service-worker.js`, `privacy.html`, `terms.html`, and files directly inside `icons/` with a known asset extension.
 
-- `index.html`, `app.js`, `style.css`, `manifest.webmanifest`, `service-worker.js`, `make-icons.html`
-- files directly inside `icons/` with a known asset extension
-
-Every other request path returns `404 Not found`, including `.env`, `.env.example`, `server.mjs`, `package.json`, `.gitignore`, any dot-file or dot-directory such as `.git/`, nested paths outside `icons/`, and encoded traversal attempts like `/..%2F.env`. `.gitignore` controls Git tracking only; this allowlist is the HTTP access control.
+Every other request path returns `404 Not found`, including `.env`, `.env.example`, backend source, package metadata, dot-directories, and encoded traversal attempts. `.gitignore` controls Git tracking only; the allowlist is the HTTP access control. Responses also set a restrictive Content Security Policy, frame denial, MIME sniffing protection, a no-referrer policy, a limited Permissions Policy, and HSTS.
 
 ### Accounts and Sync
 
-Accounts are optional and controlled entirely by `DATABASE_URL`. Leave it unset and the app runs in device-only mode: sign-in is hidden, nothing is uploaded, and every feature still works. Set it and `/api/health` reports `accountsEnabled: true`, which reveals the account card in Settings.
+Accounts are optional and controlled by `DATABASE_URL`. Leave it unset and the app runs in device-only mode: sign-in controls are hidden, no saved data is synced, and every local feature still works. Set it and `/api/health` reports `accountsEnabled: true`, enabling the account controls in Settings.
 
-Sign-in is a passwordless email link. `POST /api/account/login-link` stores only a SHA-256 hash of a single-use token that expires in 15 minutes; `GET /signin?token=…` redeems it, creates the user if needed, and sets an `HttpOnly`, `SameSite=Lax`, `Secure` session cookie for 90 days. Sessions are stored as hashes too, so the database never holds a usable credential. Without `RESEND_API_KEY` and `LOGIN_EMAIL_FROM`, the link is written to the server log instead of emailed, which is enough for solo testing.
+Sign-in is passwordless. `POST /api/account/login-link` stores only a SHA-256 hash of a single-use token that expires in 15 minutes. Opening the link shows a confirmation page; only its same-site `POST /signin` action redeems the token. Redemption creates a fresh session and sets an `HttpOnly`, `SameSite=Lax`, `Secure` cookie for 90 days. Sessions are hashed in the database. Production sign-in URLs come only from `PUBLIC_BASE_URL`, preventing Host-header link poisoning. Without `RESEND_API_KEY` and `LOGIN_EMAIL_FROM`, links are written to the server log for solo testing.
 
-The phone stays the source of truth during a round. Sync is a push-then-pull on `POST /api/account/sync`, and runs when the app loads and when a round is finished. Finished rounds, shots, and club distances upload; the round in progress does not. Merging is additive and keyed by ID, so playing offline on two devices cannot lose a round.
+The phone stays the source of truth during a round. Sync is push-then-pull and runs when the app loads and when a round finishes. Finished rounds, shots, club distances, and saved courses upload; the active round does not. Imported and synchronized values are type-, size-, and range-normalized before use.
 
 | Table | Scope | Holds |
 | --- | --- | --- |
@@ -360,13 +361,11 @@ The phone stays the source of truth during a round. Sync is a push-then-pull on 
 | `rounds` | per user | finished rounds with scores, pars, and per-hole stats |
 | `shots` | per user | club, distance, result, lie, miss direction |
 | `club_distances` | per user | carry distance per club |
-| `courses` | shared | pars, tee lengths, green targets, hazards |
+| `courses` | per user | pars, tee lengths, green targets, hazards |
 
-`courses` is deliberately shared rather than per-user: course data describes a golf course, not a person, so one golfer loading a course spares every other golfer a provider lookup. It is not removed by account deletion.
+Rounds, shots, and courses use `(user_id, id)` primary keys, so one account cannot overwrite or reserve another account's client-generated IDs. Sync writes are transactional and bounded. `DELETE /api/account` removes the user and cascades through sessions, rounds, shots, club distances, and courses. `GET /api/account/export` returns the account data as JSON. Neither operation changes the browser copy.
 
-`DELETE /api/account` removes the user row; `sessions`, `rounds`, `shots`, and `club_distances` cascade with it. `GET /api/account/export` returns everything the account holds as JSON. Neither touches the copy in the browser.
-
-The schema is created idempotently at startup, so deploying against an empty database needs no migration step.
+Schema creation and ownership migration run idempotently at startup. Remote PostgreSQL certificates are verified by default; `DATABASE_CA_CERT` supports a private certificate authority, while localhost connections can run without TLS.
 
 ## Repository Guide
 
@@ -408,9 +407,9 @@ The schema is created idempotently at startup, so deploying against an empty dat
 
 ## Verification and Remaining Work
 
-There is no automated test suite configured in `package.json`. Development checks have included JavaScript syntax checks, Git whitespace checks, local endpoint tests, course-data checks, and manual browser/phone testing.
+There is no permanent automated test suite configured in `package.json`. Development checks include JavaScript syntax checks, `npm audit`, Git whitespace checks, endpoint and browser smoke tests, mock-provider tests, and disposable real-PostgreSQL isolation tests.
 
-The access-code, rate-limit, club-distance, shot-learning, and course/tee features were last verified locally against a mock GOLFAPI upstream: wrong or missing codes returned `401` and surfaced an access-code message in the caddie panel; the fifth call past a window limit returned `429`; three 7-iron shots at 158, 162, and 160 yards produced a learned 160-yard carry that overrode the saved 150-yard entry and changed the spoken reason; and selecting the Red tees stored that tee's per-hole lengths. Repeating a course load after a reload made no new upstream requests. These are point checks, not a guarantee for every course or phrase.
+The October 2026 security pass verified: private paths return `404`; login links require a user-confirmed POST; cross-site account mutations return `403`; access grants use an `HttpOnly` cookie and legacy browser storage is removed; CSP and related headers are present; forwarded-address spoofing cannot evade direct-server rate limits; malformed, oversized, and cache-busting GOLFAPI requests are rejected; sign-in URLs fail closed without a configured production base; imported hazards render as text; sign-in URLs are not service-worker cached; two real database users can store identical client IDs without collision; and account deletion cascades through every personal table. `npm audit --omit=dev` reported no known dependency vulnerabilities at that check.
 
 Useful checks from the repository root:
 
@@ -426,10 +425,10 @@ Before expanding beyond prototype testing, remaining work includes:
 - A real mapped hole view. The app shows distances, not course layouts.
 - Wind, lie, elevation, and other contextual inputs for caddie advice.
 - Streaming or Realtime conversation for smoother voice interaction.
-- Accounts, durable storage, cross-device sync, and conversation memory. Club distances, shot history, and round history live only in the browser that recorded them.
+- Conversation memory and richer conflict handling for accounts syncing offline changes.
 - Statistics across rounds. Putts, fairways, and greens are recorded per round but not yet aggregated into trends or a handicap.
-- Per-user credentials and cost monitoring. The current access code is one shared secret with in-memory rate limits, not per-user authentication, and it resets when the server restarts.
+- Per-user paid-endpoint quotas and durable cost counters. Accounts identify synced data, but OpenAI/GOLFAPI access still uses one shared code and in-memory limits.
 - Voice control for logging shots; shots are logged through the Active Round form today.
-- Production privacy/data handling, broader tests, and native store packaging.
+- Broader automated tests, native store packaging, and final commercial/provider-license review.
 
-The current app does not collect a centralized dataset of user conversations. Club distances and shot history stay in the browser's local storage and are sent to OpenAI only as round context for a voice request. Audio is sent for server transcription when that fallback is used. Smart glasses, scheduled autonomous improvements, and email reports were discussed as future possibilities and are not implemented app features.
+The app does not collect a centralized dataset of conversations. With an account, finished rounds, courses, club distances, and shot history sync to PostgreSQL; without one, they remain in browser storage. Voice transcripts and current-round context are sent to OpenAI for each AI request, and audio is sent for transcription when that fallback is used. Smart glasses, scheduled autonomous improvements, and email reports remain future ideas, not implemented features.

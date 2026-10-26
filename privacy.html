@@ -23,22 +23,22 @@
         <p>Golf Assistant is a prototype golf scorekeeper and voice caddie. This policy describes exactly what the app does with your information. It is written to match how the app actually behaves, not a generic template.</p>
 
         <h3>What stays on your device</h3>
-        <p>Your round data lives in your browser's local storage and is never uploaded to us. That includes:</p>
+        <p>The app keeps a local browser copy of:</p>
         <ul>
           <li>the round in progress, including players, scores, putts, fairways, and greens;</li>
           <li>finished rounds kept as round history;</li>
-          <li>your saved club distances and your shot log, including distances, results, and miss directions;</li>
-          <li>your saved course library, including green coordinates and hazards;</li>
-          <li>your distance-unit preference and the access code for this server.</li>
+          <li>your saved club distances and shot log, including distances, results, and miss directions;</li>
+          <li>your saved course library, including green coordinates and hazards; and</li>
+          <li>your distance-unit preference.</li>
         </ul>
-        <p>Without an account, this is the only copy. We cannot see it, recover it for you, or sync it between devices. Clearing your browser's site data deletes all of it permanently. Use the export buttons in the app to keep your own copy.</p>
+        <p>The shared server access code is exchanged for an HttpOnly access cookie and is not kept in browser-readable storage. Without an account, the local data above is the only copy: we cannot see it, recover it, or sync it between devices. Clearing browser site data deletes that copy. Use the export buttons to retain your own backup.</p>
 
         <h3>If you create an account</h3>
-        <p>Accounts are optional. The app works fully without one, and nothing is uploaded until you sign in.</p>
-        <p>To sign in you give us an email address. We send a single-use link that expires in 15 minutes; there is no password to store. We keep your email address, the time you created the account, and a hashed session token for the signed-in device. We do not store the sign-in link itself, only a hash of it.</p>
-        <p>Once signed in, the app syncs the following to our database so it survives a lost phone and appears on your other devices: your finished rounds with scores and per-hole stats, your shot log, and your club distances. The round in progress is <em>not</em> uploaded until it is finished.</p>
-        <p>Course data — pars, tee lengths, green coordinates, and hazards — is stored in a shared table rather than against your account, because it describes a golf course and not a person. It is not deleted with your account and is reused to spare the course-data provider repeat lookups.</p>
-        <p>You can sign out, export everything in your account as JSON, or delete your account at any time from Settings. Deletion removes your user record, sessions, rounds, shots, and club distances immediately; it does not touch the copy on your device.</p>
+        <p>Accounts are optional. The app works fully without one, and no saved rounds, shots, club distances, or courses are synchronized until you sign in. Voice and course requests still use the processors described below.</p>
+        <p>To sign in you give us an email address. The server creates a single-use link that expires in 15 minutes; a configured deployment emails it, while a testing deployment may write it to the operator's server log. There is no password to store. We keep your email address, account timestamps, and hashed session tokens. The database stores only a hash of each sign-in token, not the usable token.</p>
+        <p>Once signed in, the app syncs the following to our database so it can survive a lost phone and appear on your other devices: finished rounds with scores and per-hole stats, your shot log, club distances, and saved courses with pars, tee lengths, green coordinates, and hazards. The round in progress is <em>not</em> uploaded until it is finished.</p>
+        <p>Every synchronized round, shot, club distance, and course belongs to your account. Database keys include the account owner so another account cannot overwrite a row that happens to use the same device-generated ID.</p>
+        <p>You can sign out, export everything in your account as JSON, or delete your account at any time from Settings. Deletion removes your user record, sessions, rounds, shots, club distances, and courses immediately; it does not touch the copy on your device.</p>
 
         <h3>What leaves your device, and when</h3>
         <p><strong>When you use the voice caddie:</strong> the text of your request and the current round context are sent to our server and then to OpenAI, which interprets the request and returns a structured response. The round context includes the course name, player names, scores, hole pars and lengths, the current hole's green target and hazards, and your club distances. It does not include your location history or your round history.</p>
@@ -56,14 +56,14 @@
         <p>Each processor handles data under its own terms and privacy policy. We do not sell your information, share it with advertisers, or use it to build a profile of you. The app contains no analytics or advertising trackers.</p>
 
         <h3>Server logs</h3>
-        <p>Our hosting provider records standard request logs, which can include IP addresses, timestamps, and error messages. The server also counts requests per client in memory to enforce rate limits; those counters reset when the server restarts or at midnight UTC. Logs are used to operate and debug the service, and are not used for marketing.</p>
+        <p>Our hosting provider records standard request logs, which can include IP addresses, timestamps, and error messages. The server also counts requests per client in memory to enforce rate limits; those counters reset when the server restarts or at midnight UTC. If email delivery is not configured, a requested single-use sign-in link is written to the operator's server log for testing. Logs are used to operate and debug the service, not for marketing.</p>
 
         <h3>Children</h3>
         <p>This prototype is not directed at children under 13 and should not be used by them.</p>
 
         <h3>Your choices</h3>
         <ul>
-          <li>Use the app without an account; nothing is uploaded until you sign in.</li>
+          <li>Use the app without an account; saved data is not synchronized, although voice and course requests still go to the processors described above.</li>
           <li>Decline microphone access and use the app by typing and tapping instead.</li>
           <li>Decline location access and enter distances manually.</li>
           <li>Export your courses, shots, and rounds to keep your own copy.</li>

@@ -165,7 +165,6 @@ const VOICE_SILENCE_DELAY_MS = 950;
 const AI_VOICE_TIMEOUT_MS = 7500;
 const MIN_SHOTS_FOR_LEARNED_CLUB = 3;
 const SHOT_LOG_LIMIT = 500;
-const ACCESS_TOKEN_STORAGE_KEY = "golfAppAccessToken";
 const CLUB_PROFILE_STORAGE_KEY = "golfPlayerClubProfile";
 const SHOT_LOG_STORAGE_KEY = "golfShotLog";
 const ROUND_HISTORY_STORAGE_KEY = "golfRoundHistory";
@@ -174,6 +173,16 @@ const ROUND_HISTORY_LIMIT = 100;
 const STALE_ROUND_MS = 10 * 60 * 60 * 1000;
 const POSITION_MAX_AGE_MS = 12000;
 const WEAK_ACCURACY_METERS = 25;
+const HAZARD_TYPES = new Set(["bunker", "water", "layup", "dogleg", "tree", "other"]);
+const MAX_COURSE_IMPORT_BYTES = 2 * 1024 * 1024;
+
+// Earlier releases stored the shared server access code in readable browser
+// storage. The server now uses an HttpOnly cookie; remove any legacy copy.
+try {
+  localStorage.removeItem("golfApiAccessToken");
+} catch {
+  // Storage can be unavailable in hardened/private browser contexts.
+}
 let roundHistoryCache = null;
 let lastPosition = null;
 let locationWatchId = null;
@@ -188,6 +197,7 @@ let shotLogCache = null;
 let learnedClubCache = null;
 let savedCourseCache = null;
 let serverRequiresAccessCode = false;
+let serverAccessGranted = false;
 const DEFAULT_CLUB_DISTANCES = [
   { club: "driver", min: 215, max: 700 },
   { club: "3 wood", min: 195, max: 230 },
@@ -345,13 +355,8 @@ window.addEventListener("pagehide", function () {
 });
 
 function startRound() {
-  const courseName = courseNameInput.value.trim() || "Test Course";
-
-  const players = playerNamesInput.value
-    .split(",")
-    .map(name => name.trim())
-    .filter(name => name !== "");
-
+  const courseName = (courseNameInput.value.trim() || "Test Course").slice(0, 160);
+  const players = normalizePlayerNames(playerNamesInput.value.split(","));
   if (players.length === 0) {
     notify("Please enter at least one player.");
     return;
@@ -1418,7 +1423,7 @@ async function handleAudioRecordingComplete() {
 async function transcribeVoiceAudio(audioBlob) {
   const response = await fetch("/api/transcribe", {
     method: "POST",
-    headers: withAccessHeaders({ "Content-Type": audioBlob.type || "audio/webm" }),
+    headers: { "Content-Type": audioBlob.type || "audio/webm" },
     body: audioBlob
   });
 
@@ -1970,7 +1975,7 @@ async function askVoiceAgent(transcript) {
   try {
     const response = await fetch("/api/voice-agent", {
       method: "POST",
-      headers: withAccessHeaders({ "Content-Type": "application/json" }),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         transcript: transcript,
         round: buildRoundContextForAgent(),
@@ -1998,15 +2003,6 @@ async function askVoiceAgent(transcript) {
   }
 }
 
-function withAccessHeaders(headers) {
-  const token = getAppAccessToken();
-
-  if (!token) {
-    return headers || {};
-  }
-
-  return { ...(headers || {}), "X-App-Token": token };
-}
 
 async function buildApiError(response, label) {
   const body = await response.json().catch(function () {
@@ -3775,14 +3771,14 @@ function renderHoleHazards() {
     const div = document.createElement("div");
     div.className = "hazard-item";
 
-    div.innerHTML = `
-      <strong>${index + 1}. ${hazard.name}</strong>
-      <br>
-      Type: ${hazard.type}
-      <br>
-      Coordinates: ${hazard.lat}, ${hazard.lng}
-    `;
+    const title = document.createElement("strong");
+    title.textContent = `${index + 1}. ${hazard.name}`;
 
+    const detail = document.createElement("div");
+    detail.textContent = `Type: ${hazard.type} · ${hazard.lat}, ${hazard.lng}`;
+
+    div.appendChild(title);
+    div.appendChild(detail);
     hazardList.appendChild(div);
   });
 }
@@ -4350,9 +4346,7 @@ async function fetchGolfApiJson(resource, params) {
   });
 
   const query = searchParams.toString();
-  const response = await fetch(`/api/golfapi/${resource}${query ? `?${query}` : ""}`, {
-    headers: withAccessHeaders({})
-  });
+  const response = await fetch(`/api/golfapi/${resource}${query ? `?${query}` : ""}`);
 
   if (!response.ok) {
     throw await buildApiError(response, `GOLFAPI ${resource}`);
@@ -4736,6 +4730,11 @@ function importCourseDataFromFile(event) {
   if (!file) {
     return;
   }
+  if (file.size > MAX_COURSE_IMPORT_BYTES) {
+    notify("That course file is too large. Choose a JSON file smaller than 2 MB.");
+    event.target.value = "";
+    return;
+  }
 
   const reader = new FileReader();
 
@@ -4744,7 +4743,7 @@ function importCourseDataFromFile(event) {
       const importedText = loadEvent.target.result;
       const importedJson = JSON.parse(importedText);
 
-      const importedCourses = getCoursesFromImportedJson(importedJson);
+      const importedCourses = getCoursesFromImportedJson(importedJson).slice(0, 200);
 
       if (importedCourses.length === 0) {
         notify("No courses were found in that file.");
@@ -4807,7 +4806,11 @@ function getCoursesFromImportedJson(importedJson) {
     return importedJson;
   }
 
-  if (importedJson.courses && Array.isArray(importedJson.courses)) {
+  if (!isPlainRecord(importedJson)) {
+    return [];
+  }
+
+  if (Array.isArray(importedJson.courses)) {
     return importedJson.courses;
   }
 
@@ -4819,37 +4822,43 @@ function getCoursesFromImportedJson(importedJson) {
 }
 
 function normalizeImportedCourse(course, index) {
-  const courseName = course.courseName || course.name || course.title;
-
-  if (!courseName) {
+  if (!isPlainRecord(course)) {
     return null;
   }
 
+  const courseName = String(course.courseName || course.name || course.title || "").trim().slice(0, 160);
   const totalHoles = Number(course.totalHoles || course.holes || 18);
+  const importedId = String(course.id || "").trim().slice(0, 120);
 
-  if (totalHoles !== 9 && totalHoles !== 18) {
+  if (!courseName || (totalHoles !== 9 && totalHoles !== 18)) {
     return null;
   }
 
   return {
-    id: course.id || `${Date.now()}-${index}`,
-    courseName: courseName,
-    totalHoles: totalHoles,
-    holeTargets: normalizeImportedHoleTargets(course.holeTargets || {}),
-    holeHazards: normalizeImportedHoleHazards(course.holeHazards || {}),
+    id: importedId || `${Date.now()}-${index}`,
+    courseName,
+    teeName: String(course.teeName || "").trim().slice(0, 120),
+    totalHoles,
+    holeTargets: normalizeImportedHoleTargets(course.holeTargets || {}, totalHoles),
+    holeHazards: normalizeImportedHoleHazards(course.holeHazards || {}, totalHoles),
     holePars: normalizeImportedHolePars(course.holePars || course.pars || {}, totalHoles),
     holeLengths: normalizeImportedHoleLengths(course.holeLengths || course.lengths || course.yardages || {}, totalHoles),
+    source: String(course.source || "imported").trim().slice(0, 40),
     savedAt: new Date().toISOString()
-};
+  };
 }
 
 function normalizeImportedHoleLengths(rawLengths, totalHoles) {
   const normalizedLengths = {};
 
+  if (!isPlainRecord(rawLengths)) {
+    return normalizedLengths;
+  }
+
   for (let hole = 1; hole <= totalHoles; hole++) {
     const length = Number(rawLengths[hole]);
 
-    if (length > 0) {
+    if (Number.isFinite(length) && length > 0 && length <= 1000) {
       normalizedLengths[hole] = Math.round(length);
     }
   }
@@ -4860,10 +4869,15 @@ function normalizeImportedHoleLengths(rawLengths, totalHoles) {
 function normalizeImportedHolePars(rawPars, totalHoles) {
   const normalizedPars = createDefaultPars(totalHoles);
 
-  for (const hole in rawPars) {
-    const par = Number(rawPars[hole]);
+  if (!isPlainRecord(rawPars)) {
+    return normalizedPars;
+  }
 
-    if (par >= 3 && par <= 6) {
+  for (const key of Object.keys(rawPars)) {
+    const hole = normalizeHoleNumber(key, totalHoles);
+    const par = Number(rawPars[key]);
+
+    if (hole && Number.isInteger(par) && par >= 3 && par <= 6) {
       normalizedPars[hole] = par;
     }
   }
@@ -4871,13 +4885,18 @@ function normalizeImportedHolePars(rawPars, totalHoles) {
   return normalizedPars;
 }
 
-function normalizeImportedHoleTargets(rawTargets) {
+function normalizeImportedHoleTargets(rawTargets, totalHoles = 18) {
   const normalizedTargets = {};
 
-  for (const hole in rawTargets) {
-    const target = rawTargets[hole];
+  if (!isPlainRecord(rawTargets)) {
+    return normalizedTargets;
+  }
 
-    if (!target) {
+  for (const key of Object.keys(rawTargets)) {
+    const hole = normalizeHoleNumber(key, totalHoles);
+    const target = rawTargets[key];
+
+    if (!hole || !isPlainRecord(target)) {
       continue;
     }
 
@@ -4888,38 +4907,24 @@ function normalizeImportedHoleTargets(rawTargets) {
 
       if (center) {
         normalizedTargets[hole] = {
-          front: {
-            lat: null,
-            lng: null
-          },
-          center: center,
-          back: {
-            lat: null,
-            lng: null
-          }
+          front: { lat: null, lng: null },
+          center,
+          back: { lat: null, lng: null }
         };
       }
 
       continue;
     }
 
-    // New format:
-    // "1": { "front": {...}, "center": {...}, "back": {...} }
     const front = normalizePoint(target.front);
     const center = normalizePoint(target.center);
     const back = normalizePoint(target.back);
 
     if (center) {
       normalizedTargets[hole] = {
-        front: front || {
-          lat: null,
-          lng: null
-        },
-        center: center,
-        back: back || {
-          lat: null,
-          lng: null
-        }
+        front: front || { lat: null, lng: null },
+        center,
+        back: back || { lat: null, lng: null }
       };
     }
   }
@@ -4927,28 +4932,38 @@ function normalizeImportedHoleTargets(rawTargets) {
   return normalizedTargets;
 }
 
-function normalizeImportedHoleHazards(rawHazards) {
+function normalizeImportedHoleHazards(rawHazards, totalHoles = 18) {
   const normalizedHazards = {};
 
-  for (const hole in rawHazards) {
-    const hazards = rawHazards[hole];
+  if (!isPlainRecord(rawHazards)) {
+    return normalizedHazards;
+  }
 
-    if (!Array.isArray(hazards)) {
+  for (const key of Object.keys(rawHazards)) {
+    const hole = normalizeHoleNumber(key, totalHoles);
+    const hazards = rawHazards[key];
+
+    if (!hole || !Array.isArray(hazards)) {
       continue;
     }
 
     normalizedHazards[hole] = [];
 
-    hazards.forEach(hazard => {
+    hazards.slice(0, 30).forEach(hazard => {
+      if (!isPlainRecord(hazard)) {
+        return;
+      }
+
       const point = normalizePoint(hazard);
 
       if (!point) {
         return;
       }
 
+      const type = String(hazard.type || "");
       normalizedHazards[hole].push({
-        name: hazard.name || "Unnamed target",
-        type: hazard.type || "other",
+        name: String(hazard.name || "Unnamed target").trim().slice(0, 80),
+        type: HAZARD_TYPES.has(type) ? type : "other",
         lat: point.lat,
         lng: point.lng
       });
@@ -4974,6 +4989,15 @@ function normalizePoint(point) {
     lat: lat,
     lng: lng
   };
+}
+
+function isPlainRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeHoleNumber(value, totalHoles = 18) {
+  const hole = Number(value);
+  return Number.isInteger(hole) && hole >= 1 && hole <= totalHoles ? hole : null;
 }
 
 // -------------------------------
@@ -5144,15 +5168,7 @@ function toggleCommandHelp() {
 // Server Access Code
 // -------------------------------
 
-function getAppAccessToken() {
-  try {
-    return localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) || "";
-  } catch {
-    return "";
-  }
-}
-
-function saveAccessCodeFromSettings() {
+async function saveAccessCodeFromSettings() {
   const value = accessCodeInput.value.trim();
 
   if (!value) {
@@ -5160,22 +5176,54 @@ function saveAccessCodeFromSettings() {
     return;
   }
 
-  localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, value);
+  accessCodeStatus.textContent = "Checking access code...";
+
+  try {
+    const response = await fetch("/api/access", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: value })
+    });
+    const body = await response.json().catch(function () {
+      return {};
+    });
+
+    if (!response.ok) {
+      accessCodeStatus.textContent = body.error || "That access code could not be accepted.";
+      return;
+    }
+
+    accessCodeInput.value = "";
+    serverAccessGranted = true;
+    renderAccessCodeSettings();
+    await checkServerAccessRequirement();
+  } catch {
+    accessCodeStatus.textContent = "Could not reach the server. Try again when you are online.";
+  }
+}
+
+async function clearAccessCode() {
   accessCodeInput.value = "";
+
+  try {
+    await fetch("/api/access", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clear: true })
+    });
+  } catch {
+    // The local UI can still forget access until the next health check.
+  }
+
+  serverAccessGranted = false;
   renderAccessCodeSettings();
   checkServerAccessRequirement();
 }
 
-function clearAccessCode() {
-  localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
-  accessCodeInput.value = "";
-  renderAccessCodeSettings();
-}
-
 function renderAccessCodeSettings() {
-  accessCodeStatus.textContent = getAppAccessToken()
-    ? "An access code is saved on this device."
-    : "No access code saved on this device.";
+  accessCodeStatus.textContent = serverAccessGranted
+    ? "Access is enabled on this device."
+    : "Access is not enabled on this device.";
 }
 
 async function checkServerAccessRequirement() {
@@ -5184,7 +5232,9 @@ async function checkServerAccessRequirement() {
     const health = await response.json();
 
     serverRequiresAccessCode = Boolean(health.accessTokenRequired);
+    serverAccessGranted = Boolean(health.accessGranted);
     accountsEnabled = Boolean(health.accountsEnabled);
+    renderAccessCodeSettings();
     await refreshAccountState();
     syncAccountData(false);
     renderPausedState(Boolean(health.paused));
@@ -5194,9 +5244,9 @@ async function checkServerAccessRequirement() {
       return;
     }
 
-    accessCodeHint.textContent = getAppAccessToken()
-      ? "This server requires an access code, and one is saved on this device."
-      : "This server requires an access code. Voice and course lookups will not work until you save it here.";
+    accessCodeHint.textContent = serverAccessGranted
+      ? "This server requires an access code, and access is enabled on this device."
+      : "This server requires an access code. Voice and course lookups will not work until you enable access here.";
   } catch {
     accessCodeHint.textContent = "Could not reach the server to check whether an access code is required.";
   }
@@ -5524,7 +5574,7 @@ function getLearnedClubDistances() {
     return learnedClubCache;
   }
 
-  const byClub = {};
+  const byClub = Object.create(null);
 
   getShotLog().forEach(shot => {
     const club = normalizeClubName(shot.club);
@@ -6023,7 +6073,7 @@ function undoLastScoreChange() {
 // -------------------------------
 
 function getClubTendencies() {
-  const byClub = {};
+  const byClub = Object.create(null);
 
   getShotLog().forEach(shot => {
     const club = normalizeClubName(shot.club);
@@ -6105,15 +6155,20 @@ function renderPlayerManageList() {
 }
 
 function addPlayerToRound() {
-  const name = addPlayerInput.value.trim();
+  const name = String(addPlayerInput.value || "").trim().slice(0, 60);
 
-  if (!name) {
-    playerManageStatus.textContent = "Enter a name first.";
+  if (!name || !isSafeObjectKey(name)) {
+    playerManageStatus.textContent = "Enter a valid name first.";
     return;
   }
 
   if (round.players.length === 0) {
     playerManageStatus.textContent = "Start a round before adding players.";
+    return;
+  }
+
+  if (round.players.length >= 8) {
+    playerManageStatus.textContent = "A round can have up to 8 players.";
     return;
   }
 
@@ -6379,10 +6434,13 @@ function mergeSyncedData(data) {
   }
 
   if (Array.isArray(data.clubs) && data.clubs.length > 0) {
-    saveClubProfile(data.clubs.map(entry => ({
-      club: normalizeClubName(entry.club),
-      carryYards: Number(entry.carryYards)
-    })).filter(entry => entry.club && isValidCarryDistance(entry.carryYards)));
+    saveClubProfile(data.clubs
+      .filter(isPlainRecord)
+      .map(entry => ({
+        club: normalizeClubName(entry.club),
+        carryYards: Number(entry.carryYards)
+      }))
+      .filter(entry => entry.club && isValidCarryDistance(entry.carryYards)));
   }
 
   if (Array.isArray(data.shots)) {
@@ -6390,12 +6448,14 @@ function mergeSyncedData(data) {
     const merged = getShotLog().slice();
 
     data.shots.forEach(shot => {
-      const key = shot.id || `${shot.time}-${shot.club}-${shot.distanceYards}`;
+      const normalized = normalizeSyncedShot(shot);
 
-      if (!seen.has(key)) {
-        seen.add(key);
-        merged.push({ ...shot, id: key });
+      if (!normalized || seen.has(normalized.id)) {
+        return;
       }
+
+      seen.add(normalized.id);
+      merged.push(normalized);
     });
 
     merged.sort((a, b) => new Date(a.time) - new Date(b.time));
@@ -6408,10 +6468,14 @@ function mergeSyncedData(data) {
     const merged = existing.slice();
 
     data.rounds.forEach(entry => {
-      if (!seen.has(entry.id)) {
-        seen.add(entry.id);
-        merged.push(entry);
+      const normalized = normalizeSyncedRound(entry);
+
+      if (!normalized || seen.has(normalized.id)) {
+        return;
       }
+
+      seen.add(normalized.id);
+      merged.push(normalized);
     });
 
     merged.sort((a, b) => new Date(a.finishedAt) - new Date(b.finishedAt));
@@ -6422,9 +6486,11 @@ function mergeSyncedData(data) {
     const existing = getSavedCourseSetups();
     const byId = new Map(existing.map(course => [course.id, course]));
 
-    data.courses.forEach(course => {
-      if (!byId.has(course.id)) {
-        byId.set(course.id, { ...course, savedAt: new Date().toISOString() });
+    data.courses.slice(0, 200).forEach((course, index) => {
+      const normalized = normalizeImportedCourse(course, index);
+
+      if (normalized && normalized.id && !byId.has(normalized.id)) {
+        byId.set(normalized.id, normalized);
       }
     });
 
@@ -6436,6 +6502,139 @@ function mergeSyncedData(data) {
   renderShotHistorySummary();
   renderClubProfileEditor();
   renderHomeSummary();
+}
+
+function normalizeSyncedShot(shot) {
+  if (!isPlainRecord(shot)) {
+    return null;
+  }
+
+  const id = String(shot.id || "").trim().slice(0, 120);
+  const time = normalizeClientTimestamp(shot.time);
+  const club = normalizeClubName(shot.club);
+  const distanceYards = Math.round(Number(shot.distanceYards));
+
+  if (!id || !time || !club || !Number.isInteger(distanceYards) || distanceYards < 1 || distanceYards > 500) {
+    return null;
+  }
+
+  return {
+    id,
+    time,
+    courseName: String(shot.courseName || "").trim().slice(0, 160),
+    hole: normalizeHoleNumber(shot.hole),
+    par: normalizeParValue(shot.par),
+    club,
+    distanceYards,
+    result: String(shot.result || "").trim().slice(0, 40),
+    lie: String(shot.lie || "").trim().slice(0, 40),
+    direction: String(shot.direction || "straight").trim().slice(0, 40)
+  };
+}
+
+function normalizeSyncedRound(entry) {
+  if (!isPlainRecord(entry)) {
+    return null;
+  }
+
+  const id = String(entry.id || "").trim().slice(0, 120);
+  const finishedAt = normalizeClientTimestamp(entry.finishedAt);
+  const totalHoles = Number(entry.totalHoles);
+  const players = normalizePlayerNames(Array.isArray(entry.players) ? entry.players : []);
+
+  if (!id || !finishedAt || (totalHoles !== 9 && totalHoles !== 18) || players.length === 0) {
+    return null;
+  }
+
+  const holePars = normalizeImportedHolePars(entry.holePars || {}, totalHoles);
+  const scores = {};
+  const holeStats = {};
+  const totals = [];
+
+  players.forEach(player => {
+    const playerScores = isPlainRecord(entry.scores) && isPlainRecord(entry.scores[player])
+      ? entry.scores[player]
+      : {};
+    const playerStats = isPlainRecord(entry.holeStats) && isPlainRecord(entry.holeStats[player])
+      ? entry.holeStats[player]
+      : {};
+    scores[player] = {};
+    holeStats[player] = {};
+    let total = 0;
+    let toPar = 0;
+    let putts = 0;
+    let fairways = 0;
+    let greens = 0;
+
+    for (let hole = 1; hole <= totalHoles; hole++) {
+      const score = Number(playerScores[hole]);
+
+      if (Number.isInteger(score) && score >= 1 && score <= 20) {
+        scores[player][hole] = score;
+        total += score;
+        toPar += score - holePars[hole];
+      }
+
+      const stats = playerStats[hole];
+
+      if (isPlainRecord(stats)) {
+        const holePutts = Math.min(20, Math.max(0, Math.round(Number(stats.putts) || 0)));
+        const fairway = typeof stats.fairway === "boolean" ? stats.fairway : null;
+        const gir = typeof stats.gir === "boolean" ? stats.gir : null;
+        holeStats[player][hole] = { putts: holePutts, fairway, gir };
+        putts += holePutts;
+        fairways += fairway === true ? 1 : 0;
+        greens += gir === true ? 1 : 0;
+      }
+    }
+
+    totals.push({ name: player, total, toPar, putts, fairways, greens });
+  });
+
+  return {
+    id,
+    finishedAt,
+    courseName: String(entry.courseName || "").trim().slice(0, 160),
+    teeName: String(entry.teeName || "").trim().slice(0, 120),
+    totalHoles,
+    players,
+    scores,
+    holePars,
+    holeStats,
+    totals
+  };
+}
+
+function normalizeClientTimestamp(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function normalizeParValue(value) {
+  const par = Number(value);
+  return Number.isInteger(par) && par >= 3 && par <= 6 ? par : null;
+}
+
+function isSafeObjectKey(value) {
+  return value !== "__proto__" && value !== "prototype" && value !== "constructor";
+}
+
+function normalizePlayerNames(values) {
+  const seen = new Set();
+
+  return values
+    .map(player => String(player || "").trim().slice(0, 60))
+    .filter(player => {
+      const key = player.toLowerCase();
+
+      if (!player || !isSafeObjectKey(player) || seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 8);
 }
 
 async function syncAccountData(showStatus = false) {
