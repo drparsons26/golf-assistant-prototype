@@ -313,7 +313,8 @@ async function handleLoginLinkRequest(req, res, url) {
   }
 
   const { token, minutes } = await createLoginLink(email);
-  const link = `${url.origin}/signin?token=${token}`;
+  const protocol = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() || url.protocol.replace(":", "");
+  const link = `${protocol}://${url.host}/signin?token=${token}`;
   const delivered = await sendLoginEmail(email, link, minutes);
 
   if (!delivered) {
