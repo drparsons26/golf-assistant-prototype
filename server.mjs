@@ -63,6 +63,9 @@ const globalDailyCounters = { ai: 0, golfapi: 0, auth: 0 };
 let dailyCounterDay = currentUtcDay();
 let apiPaused = String(process.env.API_PAUSED || "").trim().toLowerCase() === "true";
 let pausedReason = apiPaused ? "Paused at startup by API_PAUSED." : "";
+// Accounts stay off until the schema actually initializes, so a database that
+// is unreachable degrades to device-only mode instead of failing every call.
+let accountsReady = false;
 const golfApiCache = new Map();
 const GOLFAPI_CACHE_MAX_ENTRIES = 120;
 const GOLFAPI_CACHE_MAX_BYTES = 1024 * 1024;
@@ -102,7 +105,7 @@ createServer(async (req, res) => {
         accessTokenRequired: accessToken !== "",
         accessGranted: hasValidAccessToken(req),
         paused: apiPaused,
-        accountsEnabled: isDatabaseConfigured()
+        accountsEnabled: accountsReady
       });
       return;
     }
@@ -190,8 +193,14 @@ createServer(async (req, res) => {
 
   if (isDatabaseConfigured()) {
     initializeSchema()
-      .then(() => console.log("Accounts: DATABASE_URL is set and the schema is ready. Sign-in and sync are available."))
-      .catch(error => console.error("Accounts: schema setup failed:", error.message));
+      .then(() => {
+        accountsReady = true;
+        console.log("Accounts: DATABASE_URL is set and the schema is ready. Sign-in and sync are available.");
+      })
+      .catch(error => {
+        accountsReady = false;
+        console.error("Accounts: schema setup failed, so sign-in and sync stay disabled:", error.message);
+      });
   } else {
     console.log("Accounts: DATABASE_URL is not set, so the app runs in device-only mode with no sign-in or sync.");
   }
@@ -241,7 +250,7 @@ function describeLimit(scope) {
 }
 
 async function handleAccountRequest(req, res, url) {
-  if (!isDatabaseConfigured()) {
+  if (!accountsReady) {
     sendJson(res, 501, {
       code: "accounts_disabled",
       error: "This server runs in device-only mode. Your data stays in this browser."
@@ -418,7 +427,7 @@ async function sendLoginEmail(email, link, minutes) {
 // and silently sync their data into the attacker's account. Redemption
 // therefore requires a same-site POST the wearer actually clicks.
 async function handleSignInRedemption(req, res, url) {
-  if (!isDatabaseConfigured()) {
+  if (!accountsReady) {
     sendText(res, 404, "Not found", "text/plain");
     return;
   }

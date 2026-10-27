@@ -33,18 +33,29 @@ export function getPool() {
   return pool;
 }
 
-// Verify remote database certificates by default. Local PostgreSQL instances
-// commonly run without TLS; DATABASE_CA_CERT supports private certificate
-// authorities without weakening verification.
+// Verify remote database certificates by default. Two cases cannot present a
+// publicly verifiable certificate: a local PostgreSQL instance, which commonly
+// runs without TLS at all, and a private-network host such as Render's internal
+// database address, whose single-label name is not internet-routable and whose
+// certificate is self-signed. Set DATABASE_CA_CERT to verify either of those
+// strictly against a private certificate authority.
 function buildSslOptions() {
-  const databaseUrl = new URL(process.env.DATABASE_URL);
+  const hostname = new URL(process.env.DATABASE_URL).hostname;
+  const ca = String(process.env.DATABASE_CA_CERT || "").trim();
 
-  if (databaseUrl.hostname === "localhost" || databaseUrl.hostname === "127.0.0.1") {
+  if (ca) {
+    return { ca, rejectUnauthorized: true };
+  }
+
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
     return false;
   }
 
-  const ca = String(process.env.DATABASE_CA_CERT || "").trim();
-  return ca ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: true };
+  if (!hostname.includes(".")) {
+    return { rejectUnauthorized: false };
+  }
+
+  return { rejectUnauthorized: true };
 }
 
 export async function query(text, params = []) {
