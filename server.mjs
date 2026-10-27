@@ -10,12 +10,16 @@ import {
   createLoginLink,
   redeemLoginLink,
   getUserForSession,
+  setUserDisplayName,
   deleteSession,
   deleteUser,
   pushUserData,
   pullUserData,
   normalizeEmail,
-  isValidEmail
+  isValidEmail,
+  consumeUsage,
+  readUsageSummary,
+  pruneUsageCounters
 } from "./db.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -48,6 +52,14 @@ const rateLimits = {
     dailyLimit: Number(process.env.GOLFAPI_DAILY_REQUEST_LIMIT || 600),
     globalDailyLimit: Number(process.env.GOLFAPI_GLOBAL_DAILY_LIMIT || 2000)
   },
+  // Open-Meteo is free and keyless, so these limits exist to be a good
+  // neighbour to that service rather than to protect a bill.
+  conditions: {
+    windowMs: 5 * 60 * 1000,
+    windowLimit: Number(process.env.CONDITIONS_WINDOW_REQUEST_LIMIT || 40),
+    dailyLimit: Number(process.env.CONDITIONS_DAILY_REQUEST_LIMIT || 400),
+    globalDailyLimit: Number(process.env.CONDITIONS_GLOBAL_DAILY_LIMIT || 4000)
+  },
   // Sign-in and account traffic gets its own counters so a flood cannot
   // drain the AI budget that the paid endpoints depend on.
   auth: {
@@ -59,7 +71,7 @@ const rateLimits = {
 };
 const rateLimitBuckets = new Map();
 const dailyCounters = new Map();
-const globalDailyCounters = { ai: 0, golfapi: 0, auth: 0 };
+const globalDailyCounters = { ai: 0, golfapi: 0, auth: 0, conditions: 0 };
 let dailyCounterDay = currentUtcDay();
 let apiPaused = String(process.env.API_PAUSED || "").trim().toLowerCase() === "true";
 let pausedReason = apiPaused ? "Paused at startup by API_PAUSED." : "";
@@ -131,7 +143,7 @@ createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/api/golfapi/")) {
-      if (!allowApiRequest(req, res, "golfapi")) {
+      if (!await allowApiRequest(req, res, "golfapi")) {
         return;
       }
 
@@ -139,8 +151,17 @@ createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/conditions") {
+      if (!await allowApiRequest(req, res, "conditions")) {
+        return;
+      }
+
+      await handleConditionsRequest(url, res);
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/voice-agent") {
-      if (!allowApiRequest(req, res, "ai")) {
+      if (!await allowApiRequest(req, res, "ai")) {
         return;
       }
 
@@ -149,7 +170,7 @@ createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/transcribe") {
-      if (!allowApiRequest(req, res, "ai")) {
+      if (!await allowApiRequest(req, res, "ai")) {
         return;
       }
 
@@ -206,7 +227,7 @@ createServer(async (req, res) => {
   }
 });
 
-function allowApiRequest(req, res, limitName) {
+async function allowApiRequest(req, res, limitName) {
   if (!hasValidAccessToken(req)) {
     sendJson(res, 401, {
       code: "access_code_required",
@@ -223,23 +244,85 @@ function allowApiRequest(req, res, limitName) {
     return false;
   }
 
-  const limitResult = checkRateLimit(getClientKey(req), limitName);
+  const clientKey = getClientKey(req);
+  const windowResult = checkWindowLimit(clientKey, limitName);
 
-  if (!limitResult.allowed) {
-    res.setHeader("Retry-After", String(limitResult.retryAfterSeconds));
-    sendJson(res, 429, {
-      code: limitResult.scope === "server" ? "server_budget_reached" : "rate_limited",
-      error: describeLimit(limitResult.scope)
-    });
+  if (!windowResult.allowed) {
+    denyApiRequest(res, windowResult);
+    return false;
+  }
+
+  const dailyResult = await claimDailyAllowance(req, clientKey, limitName);
+
+  if (!dailyResult.allowed) {
+    denyApiRequest(res, dailyResult);
     return false;
   }
 
   return true;
 }
 
+function denyApiRequest(res, result) {
+  res.setHeader("Retry-After", String(result.retryAfterSeconds));
+  sendJson(res, 429, {
+    code: result.scope === "server" ? "server_budget_reached" : "rate_limited",
+    error: describeLimit(result.scope)
+  });
+}
+
+// A signed-in golfer carries their own daily allowance, so one person cannot
+// spend the whole budget and a shared phone or network does not punish them.
+// Signed-out traffic is still counted per device.
+async function claimDailyAllowance(req, clientKey, limitName) {
+  const limit = rateLimits[limitName];
+
+  if (!accountsReady) {
+    return claimMemoryDailyAllowance(clientKey, limitName);
+  }
+
+  let account = null;
+
+  try {
+    account = await getUserForSession(readSessionCookie(req));
+  } catch (error) {
+    console.error("Usage account lookup failed:", error.message);
+  }
+
+  // Device identifiers are hashed, so request counting never stores an address.
+  const subject = account
+    ? `user:${account.id}`
+    : `device:${createHash("sha256").update(clientKey).digest("base64url").slice(0, 32)}`;
+
+  try {
+    const claim = await consumeUsage(limitName, [
+      { subject, limit: limit.dailyLimit },
+      { subject: "server", limit: limit.globalDailyLimit }
+    ]);
+
+    if (claim.allowed) {
+      return { allowed: true };
+    }
+
+    return {
+      allowed: false,
+      scope: claim.deniedSubject === "server" ? "server" : account ? "account" : "day",
+      retryAfterSeconds: secondsUntilUtcMidnight()
+    };
+  } catch (error) {
+    // A database hiccup must not hand out unlimited paid calls, so fall back to
+    // the in-memory counters rather than allowing the request outright.
+    console.error("Durable usage accounting failed, using memory counters:", error.message);
+    return claimMemoryDailyAllowance(clientKey, limitName);
+  }
+}
+
 function describeLimit(scope) {
   if (scope === "server") {
     return "This server hit its daily budget for caddie requests. Scoring and saved course data still work, and the budget resets at midnight UTC.";
+  }
+
+  if (scope === "account") {
+    return "Daily request limit reached for this account. Scoring and saved course data still work, and the limit resets at midnight UTC.";
   }
 
   if (scope === "day") {
@@ -280,7 +363,9 @@ async function handleAccountRequest(req, res, url) {
     const user = await getUserForSession(readSessionCookie(req));
 
     if (req.method === "GET" && route === "/") {
-      sendJson(res, 200, user ? { signedIn: true, email: user.email } : { signedIn: false });
+      sendJson(res, 200, user
+        ? { signedIn: true, email: user.email, name: user.display_name || "" }
+        : { signedIn: false });
       return;
     }
 
@@ -302,6 +387,19 @@ async function handleAccountRequest(req, res, url) {
       const data = await pullUserData(user.id);
 
       sendJson(res, 200, { pushed, data, syncedAt: new Date().toISOString() });
+      return;
+    }
+
+    if (req.method === "POST" && route === "/name") {
+      const body = await readJsonBody(req, 4 * 1024);
+      const updated = await setUserDisplayName(user.id, body && body.name);
+
+      if (!updated) {
+        sendJson(res, 400, { error: "Enter the name you want the caddie to call you." });
+        return;
+      }
+
+      sendJson(res, 200, { signedIn: true, email: updated.email, name: updated.display_name });
       return;
     }
 
@@ -338,9 +436,17 @@ async function handleLoginLinkRequest(req, res, url) {
   }
 
   const email = normalizeEmail(body && body.email);
+  // The caddie speaks to a person, and rounds record a name, so an account
+  // always carries one. Returning golfers simply confirm the name they use.
+  const name = String((body && body.name) || "").trim().slice(0, 60);
 
   if (!isValidEmail(email)) {
     sendJson(res, 400, { error: "Enter a valid email address." });
+    return;
+  }
+
+  if (name.length < 2) {
+    sendJson(res, 400, { error: "Enter the name you want the caddie to call you." });
     return;
   }
 
@@ -351,7 +457,7 @@ async function handleLoginLinkRequest(req, res, url) {
 
   const baseUrl = publicBaseUrl(req, url);
 
-  const created = await createLoginLink(email);
+  const created = await createLoginLink(email, name);
 
   if (!created) {
     sendJson(res, 429, {
@@ -707,20 +813,43 @@ async function handleAdminRequest(req, res) {
 
   rollDailyCountersIfNeeded();
 
+  let durable = null;
+
+  if (accountsReady) {
+    try {
+      durable = await readUsageSummary();
+    } catch (error) {
+      console.error("Could not read durable usage:", error.message);
+    }
+  }
+
   sendJson(res, 200, {
     paused: apiPaused,
     pausedReason: pausedReason,
     utcDay: dailyCounterDay,
     secondsUntilReset: secondsUntilUtcMidnight(),
+    counterStore: durable ? "database" : "memory",
     usage: {
-      ai: { today: globalDailyCounters.ai, dailyCeiling: rateLimits.ai.globalDailyLimit },
-      golfapi: { today: globalDailyCounters.golfapi, dailyCeiling: rateLimits.golfapi.globalDailyLimit }
+      ai: {
+        today: durable ? (durable.ai ? durable.ai.serverUsed : 0) : globalDailyCounters.ai,
+        dailyCeiling: rateLimits.ai.globalDailyLimit,
+        accounts: durable && durable.ai ? durable.ai.accounts : null,
+        devices: durable && durable.ai ? durable.ai.devices : null
+      },
+      golfapi: {
+        today: durable ? (durable.golfapi ? durable.golfapi.serverUsed : 0) : globalDailyCounters.golfapi,
+        dailyCeiling: rateLimits.golfapi.globalDailyLimit,
+        accounts: durable && durable.golfapi ? durable.golfapi.accounts : null,
+        devices: durable && durable.golfapi ? durable.golfapi.devices : null
+      }
     },
     perClientLimits: {
       ai: { perWindow: rateLimits.ai.windowLimit, perDay: rateLimits.ai.dailyLimit },
       golfapi: { perWindow: rateLimits.golfapi.windowLimit, perDay: rateLimits.golfapi.dailyLimit }
     },
-    note: "Counters live in server memory and reset on restart or at midnight UTC."
+    note: durable
+      ? "Daily counters are stored per account and per device in the database and reset at midnight UTC. Short-window burst limits stay in memory."
+      : "No database is configured, so counters live in server memory and reset on restart or at midnight UTC."
   });
 }
 
@@ -804,6 +933,55 @@ function checkRateLimit(clientKey, limitName) {
   return { allowed: true };
 }
 
+// Burst protection stays in memory on purpose: it guards a five-minute window,
+// so losing it on restart costs nothing, and it must answer without a round
+// trip to the database on every request.
+function checkWindowLimit(clientKey, limitName) {
+  const limit = rateLimits[limitName];
+  const now = Date.now();
+  const windowKey = `${limitName}:${clientKey}`;
+  const timestamps = (rateLimitBuckets.get(windowKey) || []).filter(time => {
+    return now - time < limit.windowMs;
+  });
+
+  if (timestamps.length >= limit.windowLimit) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((limit.windowMs - (now - timestamps[0])) / 1000));
+
+    rateLimitBuckets.set(windowKey, timestamps);
+    return { allowed: false, scope: "window", retryAfterSeconds };
+  }
+
+  timestamps.push(now);
+  rateLimitBuckets.set(windowKey, timestamps);
+  pruneRateLimitBuckets(now);
+
+  return { allowed: true };
+}
+
+// Used when no database is configured, and as the fallback if one stops
+// answering. Counts reset on restart, which is why it is not the main path.
+function claimMemoryDailyAllowance(clientKey, limitName) {
+  const limit = rateLimits[limitName];
+
+  rollDailyCountersIfNeeded();
+
+  if (globalDailyCounters[limitName] >= limit.globalDailyLimit) {
+    return { allowed: false, scope: "server", retryAfterSeconds: secondsUntilUtcMidnight() };
+  }
+
+  const dailyKey = `${limitName}:${clientKey}`;
+  const dailyCount = dailyCounters.get(dailyKey) || 0;
+
+  if (dailyCount >= limit.dailyLimit) {
+    return { allowed: false, scope: "day", retryAfterSeconds: secondsUntilUtcMidnight() };
+  }
+
+  dailyCounters.set(dailyKey, dailyCount + 1);
+  globalDailyCounters[limitName] += 1;
+
+  return { allowed: true };
+}
+
 function rollDailyCountersIfNeeded() {
   const today = currentUtcDay();
 
@@ -813,6 +991,13 @@ function rollDailyCountersIfNeeded() {
     globalDailyCounters.ai = 0;
     globalDailyCounters.golfapi = 0;
     globalDailyCounters.auth = 0;
+    globalDailyCounters.conditions = 0;
+
+    if (accountsReady) {
+      pruneUsageCounters().catch(error => {
+        console.error("Could not prune old usage counters:", error.message);
+      });
+    }
   }
 }
 
@@ -927,6 +1112,98 @@ async function handleTranscriptionRequest(req, res) {
   }
 }
 
+// Wind, temperature, and ground elevation from Open-Meteo, which needs no key.
+// The browser never calls it directly, so a golfer's coordinates are not handed
+// to another provider by the phone, and nearby requests share one cached answer.
+async function handleConditionsRequest(url, res) {
+  const lat = Number(url.searchParams.get("lat"));
+  const lng = Number(url.searchParams.get("lng"));
+  const targetLat = Number(url.searchParams.get("targetLat"));
+  const targetLng = Number(url.searchParams.get("targetLng"));
+
+  if (!isValidLatitude(lat) || !isValidLongitude(lng)) {
+    sendJson(res, 400, { error: "A valid latitude and longitude are required." });
+    return;
+  }
+
+  const hasTarget = isValidLatitude(targetLat) && isValidLongitude(targetLng);
+  // Three decimals is about 100 m: fine enough for weather, coarse enough that
+  // one cached answer serves a whole hole and blurs the stored position.
+  const cacheKey = [lat.toFixed(3), lng.toFixed(3), hasTarget ? targetLat.toFixed(3) : "", hasTarget ? targetLng.toFixed(3) : ""].join(",");
+  const cached = readGolfApiCache(`conditions:${cacheKey}`);
+
+  if (cached) {
+    sendText(res, 200, cached.body, "application/json");
+    return;
+  }
+
+  const weatherUrl = new URL("https://api.open-meteo.com/v1/forecast");
+  weatherUrl.searchParams.set("latitude", lat.toFixed(4));
+  weatherUrl.searchParams.set("longitude", lng.toFixed(4));
+  weatherUrl.searchParams.set("current", "temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m");
+  weatherUrl.searchParams.set("temperature_unit", "fahrenheit");
+  weatherUrl.searchParams.set("wind_speed_unit", "mph");
+
+  const elevationUrl = new URL("https://api.open-meteo.com/v1/elevation");
+  elevationUrl.searchParams.set("latitude", hasTarget ? `${lat.toFixed(5)},${targetLat.toFixed(5)}` : lat.toFixed(5));
+  elevationUrl.searchParams.set("longitude", hasTarget ? `${lng.toFixed(5)},${targetLng.toFixed(5)}` : lng.toFixed(5));
+
+  try {
+    const [weatherResponse, elevationResponse] = await Promise.all([
+      fetch(weatherUrl, { signal: AbortSignal.timeout(8000) }),
+      fetch(elevationUrl, { signal: AbortSignal.timeout(8000) })
+    ]);
+
+    if (!weatherResponse.ok) {
+      sendJson(res, 502, { error: "The weather service could not answer that request." });
+      return;
+    }
+
+    const weather = JSON.parse(await readLimitedResponseText(weatherResponse, 256 * 1024) || "{}");
+    const current = weather.current || {};
+    let elevations = [];
+
+    if (elevationResponse.ok) {
+      const elevationBody = JSON.parse(await readLimitedResponseText(elevationResponse, 32 * 1024) || "{}");
+      elevations = Array.isArray(elevationBody.elevation) ? elevationBody.elevation : [];
+    }
+
+    const playerElevation = Number.isFinite(elevations[0]) ? elevations[0] : null;
+    const targetElevation = hasTarget && Number.isFinite(elevations[1]) ? elevations[1] : null;
+    const body = JSON.stringify({
+      observedAt: current.time || new Date().toISOString(),
+      temperatureF: Number.isFinite(current.temperature_2m) ? Math.round(current.temperature_2m) : null,
+      humidityPercent: Number.isFinite(current.relative_humidity_2m) ? Math.round(current.relative_humidity_2m) : null,
+      windMph: Number.isFinite(current.wind_speed_10m) ? Math.round(current.wind_speed_10m) : null,
+      windGustMph: Number.isFinite(current.wind_gusts_10m) ? Math.round(current.wind_gusts_10m) : null,
+      // Meteorological convention: the direction the wind blows *from*.
+      windFromDegrees: Number.isFinite(current.wind_direction_10m) ? Math.round(current.wind_direction_10m) : null,
+      elevation: {
+        playerMeters: playerElevation,
+        targetMeters: targetElevation,
+        riseMeters: playerElevation !== null && targetElevation !== null
+          ? Math.round((targetElevation - playerElevation) * 10) / 10
+          : null
+      },
+      source: "Open-Meteo"
+    });
+
+    writeGolfApiCache(`conditions:${cacheKey}`, "conditions", body, "application/json");
+    sendText(res, 200, body, "application/json");
+  } catch (error) {
+    console.error("Conditions lookup failed:", error.message);
+    sendJson(res, 502, { error: "Could not reach the weather service." });
+  }
+}
+
+function isValidLatitude(value) {
+  return Number.isFinite(value) && value >= -90 && value <= 90;
+}
+
+function isValidLongitude(value) {
+  return Number.isFinite(value) && value >= -180 && value <= 180;
+}
+
 async function handleGolfApiRequest(url, res) {
   if (!process.env.GOLFAPI_API_KEY) {
     sendJson(res, 503, {
@@ -1030,7 +1307,10 @@ function writeGolfApiCache(key, resource, body, contentType) {
     golfApiCache.delete(golfApiCache.keys().next().value);
   }
 
-  const ttlMs = resource === "clubs" ? 30 * 60 * 1000 : 12 * 60 * 60 * 1000;
+  // Weather moves; course data does not.
+  const ttlMs = resource === "conditions"
+    ? 10 * 60 * 1000
+    : resource === "clubs" ? 30 * 60 * 1000 : 12 * 60 * 60 * 1000;
 
   golfApiCache.set(key, {
     body: body,
@@ -1249,13 +1529,17 @@ function sanitizeRound(round) {
   return {
     courseName: String(round.courseName || ""),
     players: Array.isArray(round.players) ? round.players.map(player => String(player)) : [],
+    you: round.you ? String(round.you).slice(0, 60) : null,
+    golferName: round.golferName ? String(round.golferName).slice(0, 60) : "",
     totalHoles: Number(round.totalHoles || 18),
     currentHole: Number(round.currentHole || 1),
     scores: round.scores || {},
     holePars: round.holePars || {},
     holeLengths: round.holeLengths || {},
     currentHoleContext: round.currentHoleContext || {},
-    playerClubProfile: round.playerClubProfile || {}
+    playerClubProfile: round.playerClubProfile || {},
+    conditions: round.conditions || null,
+    currentLie: round.currentLie ? String(round.currentLie).slice(0, 20) : null
   };
 }
 
@@ -1265,7 +1549,9 @@ function buildAgentInstructions() {
     "Interpret the user's natural language using only the supplied round JSON.",
     "Return exactly one JSON object that matches the schema. Do not include markdown.",
     "Prefer direct, concise messages suitable for both screen display and text-to-speech.",
-    "When the user says I, me, my, or myself, treat that as the first player in round.players.",
+    "round.you is the person speaking: the signed-in golfer's name in round.players. When the user says I, me, my, or myself, that means round.you.",
+    "If round.you is null the account holder is not playing this round, so ask which player they mean instead of guessing.",
+    "Address the golfer by round.golferName when a greeting or direct reply is natural, but never pad messages with it.",
     "Use start_round when the user wants to begin a round and clearly gives a course name plus at least one player. If players are not clear, use clarify.",
     "Use end_round when the user wants to finish, end, close, or complete the active round. This saves and summarizes; it does not delete the round.",
     "For score language, par means the hole par, birdie means par minus 1, bogey means par plus 1, double bogey means par plus 2, eagle means par minus 2.",
@@ -1273,9 +1559,12 @@ function buildAgentInstructions() {
     "Use clarify for ambiguous player names, unclear holes, or unclear score values.",
     "Use recommend_club when the user asks what club to hit, what shot to play, how to attack a hole, lay up or go for it, or asks for caddie advice.",
     "For recommend_club, include any explicit distance in payload.distanceYards. If no distance is stated, leave it 0 and the browser will use GPS/course data when possible.",
-    "For recommend_club, give advice like a real caddie: club, target, miss preference, and one clear swing/shot thought. Mention uncertainty when wind, lie, elevation, or pin location are unknown.",
+    "For recommend_club, give advice like a real caddie: club, target, miss preference, and one clear swing/shot thought.",
+    "round.conditions holds measured wind, temperature, and the elevation rise from the golfer to the green; round.currentLie is the lie they selected. Use them when present and say what you used. When round.conditions is null, say the call does not account for wind or elevation yet. Pin position is never known.",
     "When round.playerClubProfile.status is configured, choose payload.recommendedClub from that club list using its carryYards, preferring the shortest club that still covers the distance. Say when a club distance came from the golfer's logged shots. When the profile is not configured, say the call is a general estimate.",
     "Do not answer club recommendation requests with the player's score, total score, or only the raw distance.",
+    "Use log_shot when the golfer reports a shot they just hit, such as 'log a 7 iron 165 straight', 'I hit pitching wedge 120, pin high', or 'that was a 9 iron, came up short'. Fill payload.club and payload.distanceYards, and set payload.shotResult, payload.shotLie, and payload.shotDirection when they are stated; leave them empty when they are not.",
+    "Never use log_shot for a score. 'I made a five' is save_scores; 'I hit five iron 180' is log_shot.",
     "Use get_green_yardage only when the user directly asks how far, yardage, or distance to the green. The browser will handle GPS.",
     "Use get_hazard_distance only when the user directly asks distance to a named hazard or target.",
     "Use unknown only when the request is unrelated to this golf round."
@@ -1427,6 +1716,7 @@ const voiceAgentSchema = {
         "go_to_hole",
         "answer_question",
         "recommend_club",
+        "log_shot",
         "get_green_yardage",
         "get_hazard_distance",
         "clarify",
@@ -1472,7 +1762,11 @@ const voiceAgentSchema = {
         recommendedClub: { type: "string" },
         recommendationReason: { type: "string" },
         shotTarget: { type: "string" },
-        missPreference: { type: "string" }
+        missPreference: { type: "string" },
+        club: { type: "string" },
+        shotResult: { type: "string", enum: ["", "as planned", "short", "long"] },
+        shotLie: { type: "string", enum: ["", "tee", "fairway", "rough", "sand", "recovery"] },
+        shotDirection: { type: "string", enum: ["", "straight", "left", "right"] }
       },
       required: [
         "scores",
@@ -1490,7 +1784,11 @@ const voiceAgentSchema = {
         "recommendedClub",
         "recommendationReason",
         "shotTarget",
-        "missPreference"
+        "missPreference",
+        "club",
+        "shotResult",
+        "shotLie",
+        "shotDirection"
       ]
     },
     message: { type: "string" },

@@ -133,6 +133,20 @@ const discardRoundBtn = document.getElementById("discardRoundBtn");
 const roundHistoryList = document.getElementById("roundHistoryList");
 const exportRoundHistoryBtn = document.getElementById("exportRoundHistoryBtn");
 const clearRoundHistoryBtn = document.getElementById("clearRoundHistoryBtn");
+const statsSection = document.getElementById("statsSection");
+const statsPlayerTitle = document.getElementById("statsPlayerTitle");
+const statsRoundCount = document.getElementById("statsRoundCount");
+const statsHandicap = document.getElementById("statsHandicap");
+const statsHandicapNote = document.getElementById("statsHandicapNote");
+const statsScoringAverage = document.getElementById("statsScoringAverage");
+const statsBestRound = document.getElementById("statsBestRound");
+const statsPutts = document.getElementById("statsPutts");
+const statsFairways = document.getElementById("statsFairways");
+const statsGreens = document.getElementById("statsGreens");
+const statsAccuracyNote = document.getElementById("statsAccuracyNote");
+const statsTrend = document.getElementById("statsTrend");
+const statsRoundList = document.getElementById("statsRoundList");
+const statsParBreakdown = document.getElementById("statsParBreakdown");
 const deleteCourseSetupBtn = document.getElementById("deleteCourseSetupBtn");
 const managePlayersBtn = document.getElementById("managePlayersBtn");
 const playersSheet = document.getElementById("playersSheet");
@@ -169,12 +183,24 @@ const CLUB_PROFILE_STORAGE_KEY = "golfPlayerClubProfile";
 const SHOT_LOG_STORAGE_KEY = "golfShotLog";
 const ROUND_HISTORY_STORAGE_KEY = "golfRoundHistory";
 const UNIT_STORAGE_KEY = "golfDistanceUnit";
+const GOLFER_NAME_STORAGE_KEY = "golfGolferName";
 const ROUND_HISTORY_LIMIT = 100;
 const STALE_ROUND_MS = 10 * 60 * 60 * 1000;
 const POSITION_MAX_AGE_MS = 12000;
 const WEAK_ACCURACY_METERS = 25;
 const HAZARD_TYPES = new Set(["bunker", "water", "layup", "dogleg", "tree", "other"]);
 const MAX_COURSE_IMPORT_BYTES = 2 * 1024 * 1024;
+const CONDITIONS_MAX_AGE_MS = 10 * 60 * 1000;
+// What a lie costs in carry, as a fraction of the shot.
+const LIE_ADJUSTMENTS = {
+  tee: { factor: 0, label: "a teed ball" },
+  fairway: { factor: 0, label: "a fairway lie" },
+  rough: { factor: 0.05, label: "rough" },
+  sand: { factor: 0.12, label: "sand" },
+  recovery: { factor: 0.15, label: "a recovery lie" }
+};
+const SPOKEN_SHOT_RESULTS = { "as planned": "good", short: "short", long: "long" };
+let conditionsCache = null;
 
 // Earlier releases stored the shared server access code in readable browser
 // storage. The server now uses an HttpOnly cookie; remove any legacy copy.
@@ -337,6 +363,8 @@ window.addEventListener("load", function () {
   renderHomeSummary();
   renderRoundHistory();
   renderUnitPreference();
+  renderGolferName();
+  prefillGolferAsPlayer();
   renderConnectionState();
   maybeShowResumeBanner();
   reportSignInRedirect();
@@ -517,6 +545,7 @@ function showAppScreen(target) {
     startSetup: startSetupSection,
     round: roundSection,
     scorecard: scorecardSection,
+    stats: statsSection,
     yardage: yardageSection,
     settingsSection: settingsSection
   };
@@ -554,11 +583,16 @@ function showAppScreen(target) {
     renderHoleHazards();
   }
 
+  if (normalizedTarget === "stats") {
+    renderStatistics();
+  }
+
   if (normalizedTarget === "settingsSection") {
     renderAccessCodeSettings();
     renderClubProfileStatus();
     renderShotHistorySummary();
     renderUnitPreference();
+    renderGolferName();
   }
 
   if (normalizedTarget === "home") {
@@ -2035,6 +2069,10 @@ function buildRoundContextForAgent() {
   return {
     courseName: round.courseName,
     players: round.players,
+    // Who "I", "me", and "my" mean: the signed-in golfer, matched into this
+    // round's player list. Null when the account holder is not playing.
+    you: getMyPlayerName(),
+    golferName: getGolferName(),
     totalHoles: round.totalHoles,
     currentHole: currentHole,
     scores: round.scores,
@@ -2047,8 +2085,79 @@ function buildRoundContextForAgent() {
       hazards: (round.holeHazards || {})[currentHole] || [],
       hasGreenTargetsOnOtherHoles: Object.keys(round.holeTargets || {}).length > 0
     },
-    playerClubProfile: getPlayerClubProfileForAgent()
+    playerClubProfile: getPlayerClubProfileForAgent(),
+    // Only conditions already fetched: a voice reply never waits on weather.
+    conditions: conditionsCache && Date.now() - conditionsCache.time < CONDITIONS_MAX_AGE_MS
+      ? conditionsCache.value
+      : null,
+    currentLie: shotLieInput ? shotLieInput.value : null
   };
+}
+
+// -------------------------------
+// Golfer identity
+// -------------------------------
+
+// "I", "me", and "my" mean the person whose account is in use. The name is
+// saved per device, filled in from the account email on first sign-in, and
+// synced with the account so a second phone resolves the same golfer.
+function getGolferName() {
+  try {
+    return String(localStorage.getItem(GOLFER_NAME_STORAGE_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function saveGolferName(name) {
+  const cleaned = String(name || "").trim().slice(0, 60);
+
+  try {
+    if (cleaned) {
+      localStorage.setItem(GOLFER_NAME_STORAGE_KEY, cleaned);
+    } else {
+      localStorage.removeItem(GOLFER_NAME_STORAGE_KEY);
+    }
+  } catch {
+    // Storage can be unavailable in hardened/private browser contexts.
+  }
+
+  return cleaned;
+}
+
+// The account holder, resolved into this round's player list. Falls back to
+// the first player only when no identity is saved, so rounds started before
+// this feature keep behaving exactly as they did.
+function getMyPlayerName() {
+  const golfer = getGolferName();
+
+  if (golfer) {
+    const match = round.players.find(player => player.toLowerCase() === golfer.toLowerCase());
+
+    return match || null;
+  }
+
+  return round.players[0] || null;
+}
+
+function isMyPlayer(player) {
+  const me = getMyPlayerName();
+
+  return Boolean(me) && player === me;
+}
+
+function defaultGolferNameFromEmail(email) {
+  const local = String(email || "").split("@")[0].replace(/[._-]+/g, " ").trim();
+
+  if (!local) {
+    return "";
+  }
+
+  return local
+    .split(/\s+/)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
+    .slice(0, 60);
 }
 
 function getPlayerClubProfileForAgent() {
@@ -2238,6 +2347,10 @@ function executeVoiceAgentAction(result) {
     return true;
   }
 
+  if (result.action === "log_shot") {
+    return executeAgentLogShot(result);
+  }
+
   if (result.action === "get_green_yardage") {
     showVoiceAgentMessage(result.message || "Getting yardage...", false);
     getYardageToGreen(true);
@@ -2411,7 +2524,11 @@ async function executeAgentClubRecommendation(result) {
   const statedDistance = Number(result.payload.distanceYards || 0);
 
   if (statedDistance > 0) {
-    const recommendation = buildClubRecommendationMessage(result, statedDistance, "asked distance");
+    // A spoken distance is the number on a marker or a rangefinder, so the
+    // app only applies the conditions it can measure for itself.
+    const conditions = await getConditionsForCurrentShot();
+    const recommendation = buildClubRecommendationMessage(result, statedDistance, "asked distance", conditions.value, conditions.bearing);
+
     showVoiceAgentMessage(recommendation, result.speak);
     return;
   }
@@ -2447,7 +2564,15 @@ async function executeAgentClubRecommendation(result) {
       return;
     }
 
-    const recommendation = buildClubRecommendationMessage(result, distance, "GPS center-green yardage");
+    const conditions = await getConditionsForCurrentShot(position, target);
+    const recommendation = buildClubRecommendationMessage(
+      result,
+      distance,
+      "GPS center-green yardage",
+      conditions.value,
+      conditions.bearing
+    );
+
     showVoiceAgentMessage(recommendation, result.speak);
   } catch (error) {
     const gpsMessage = `${getLocationErrorMessage(error)} Tell me the distance and I can still recommend a club.`;
@@ -2465,30 +2590,58 @@ function getCurrentPositionForCaddie() {
   });
 }
 
-function buildClubRecommendationMessage(result, distanceYards, distanceSource) {
-  const personalChoice = chooseClubFromPersonalDistances(distanceYards);
-  const club = personalChoice ? personalChoice.club : (result.payload.recommendedClub || chooseDefaultClubForDistance(distanceYards));
+// Returns the conditions for the shot in front of the golfer, along with the
+// bearing to the target so a wind can be split into head and cross components.
+async function getConditionsForCurrentShot(position, target) {
+  const hole = target || getCurrentHoleTarget();
+  const coords = position ? position.coords : (lastPosition ? lastPosition.coords : null);
+
+  if (!coords) {
+    return { value: null, bearing: null };
+  }
+
+  const hasTarget = Boolean(hole && hole.center && hole.center.lat !== null && hole.center.lng !== null);
+  const value = await fetchPlayingConditions(coords.latitude, coords.longitude, hole);
+  const bearing = hasTarget
+    ? calculateBearing(coords.latitude, coords.longitude, hole.center.lat, hole.center.lng)
+    : null;
+
+  return { value: value, bearing: bearing };
+}
+
+function buildClubRecommendationMessage(result, distanceYards, distanceSource, conditions, shotBearing) {
+  const lie = shotLieInput ? shotLieInput.value : "fairway";
+  const playing = computePlayingDistance(distanceYards, conditions, shotBearing, lie);
+  // The club is chosen for how far the shot plays, not how far it measures.
+  const personalChoice = chooseClubFromPersonalDistances(playing.playingYards);
+  const club = personalChoice ? personalChoice.club : (result.payload.recommendedClub || chooseDefaultClubForDistance(playing.playingYards));
   const par = getHolePar(round.currentHole);
   const holeLength = getHoleLength(round.currentHole);
   const hazards = getCurrentHoleHazards();
   const hazardAdvice = buildCaddieHazardAdvice(hazards);
-  const target = result.payload.shotTarget || buildDefaultShotTarget(distanceYards, par);
+  const target = result.payload.shotTarget || buildDefaultShotTarget(playing.playingYards, par);
   const miss = result.payload.missPreference || buildDefaultMissPreference(hazards);
-  const reason = buildClubRecommendationReason(result, personalChoice, distanceYards);
+  const reason = buildClubRecommendationReason(result, personalChoice, playing.playingYards);
   const tendency = describeClubTendency(club);
   const holeContext = holeLength
     ? `Hole ${round.currentHole} is a par ${par}, ${formatDistance(holeLength)}.`
     : `Hole ${round.currentHole} is a par ${par}.`;
+  const playsLine = playing.adjustments.length > 0
+    ? `That plays about ${formatDistance(playing.playingYards)}: ${playing.adjustments.map(item => item.label).join(", ")}.`
+    : "";
+  const weatherLine = playing.adjustments.length === 0 ? describePlayingConditions(conditions) : "";
 
   prefillShotLogFromRecommendation(club, distanceYards);
 
   return [
     `${holeContext} From ${formatDistance(distanceYards)}, I would hit ${club}.`,
+    playsLine,
     `Aim ${target}.`,
     `Best miss: ${miss}.`,
     hazardAdvice,
     reason,
     tendency,
+    weatherLine ? `Conditions: ${weatherLine}.` : "",
     distanceSource === "GPS center-green yardage" ? "This is based on center-green GPS yardage." : ""
   ].filter(Boolean).join(" ");
 }
@@ -2632,13 +2785,14 @@ function buildScoreSaveMessage(scores) {
 function parseScoreCommand(command) {
   const entries = [];
 
-  round.players.forEach((player, index) => {
+  round.players.forEach(player => {
     const playerName = player.toLowerCase();
 
     const possibleNames = [playerName];
 
-    // Treat the first player as "I", "me", or "my"
-    if (index === 0) {
+    // "I", "me", and "my" belong to the signed-in golfer, not to whoever
+    // happens to be listed first.
+    if (isMyPlayer(player)) {
       possibleNames.push("i");
       possibleNames.push("me");
       possibleNames.push("my");
@@ -2941,27 +3095,18 @@ function isGeneralPlayerScoreQuestion(command) {
 }
 
 function findPlayerInCommand(command) {
-  for (let i = 0; i < round.players.length; i++) {
-    const player = round.players[i];
-    const playerName = player.toLowerCase();
-
-    const playerPattern = new RegExp(`\\b${escapeRegExp(playerName)}\\b`, "i");
+  // A named player always wins over a pronoun, so "what did Sam shoot" is
+  // never mistaken for the account holder's own score.
+  for (const player of round.players) {
+    const playerPattern = new RegExp(`\\b${escapeRegExp(player.toLowerCase())}\\b`, "i");
 
     if (playerPattern.test(command)) {
       return player;
     }
+  }
 
-    // Treat the first player as the main user.
-    // Example: if Drake is first, "my score" means Drake's score.
-    if (i === 0) {
-      if (
-        /\bi\b/.test(command) ||
-        /\bme\b/.test(command) ||
-        /\bmy\b/.test(command)
-      ) {
-        return player;
-      }
-    }
+  if (/\bi\b/.test(command) || /\bme\b/.test(command) || /\bmy\b/.test(command)) {
+    return getMyPlayerName();
   }
 
   return null;
@@ -3540,6 +3685,170 @@ function calculateYardsBetween(lat1, lng1, lat2, lng2) {
 
 function toRadians(degrees) {
   return degrees * Math.PI / 180;
+}
+
+// -------------------------------
+// Playing conditions
+// -------------------------------
+
+function calculateBearing(lat1, lng1, lat2, lng2) {
+  const startLat = toRadians(lat1);
+  const endLat = toRadians(lat2);
+  const deltaLng = toRadians(lng2 - lng1);
+  const y = Math.sin(deltaLng) * Math.cos(endLat);
+  const x = Math.cos(startLat) * Math.sin(endLat) - Math.sin(startLat) * Math.cos(endLat) * Math.cos(deltaLng);
+
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+// One lookup serves a whole hole: the server caches by rounded position and
+// the client holds the answer long enough that walking a fairway is free.
+async function fetchPlayingConditions(lat, lng, target) {
+  const hasTarget = Boolean(target && target.center && target.center.lat !== null && target.center.lng !== null);
+  const key = [lat.toFixed(3), lng.toFixed(3), hasTarget ? target.center.lat.toFixed(3) : ""].join(",");
+
+  if (conditionsCache && conditionsCache.key === key && Date.now() - conditionsCache.time < CONDITIONS_MAX_AGE_MS) {
+    return conditionsCache.value;
+  }
+
+  const params = new URLSearchParams({ lat: String(lat), lng: String(lng) });
+
+  if (hasTarget) {
+    params.set("targetLat", String(target.center.lat));
+    params.set("targetLng", String(target.center.lng));
+  }
+
+  try {
+    const response = await fetch(`/api/conditions?${params.toString()}`, { credentials: "same-origin" });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const value = await response.json();
+
+    conditionsCache = { key: key, time: Date.now(), value: value };
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+// Turns a measured yardage into the distance the shot actually plays. Each
+// rule is a widely used caddie approximation, kept separate so the spoken
+// explanation can name exactly what moved the number.
+function computePlayingDistance(distanceYards, conditions, shotBearing, lie) {
+  const adjustments = [];
+  let playingYards = distanceYards;
+
+  if (conditions) {
+    const rise = conditions.elevation ? conditions.elevation.riseMeters : null;
+
+    if (Number.isFinite(rise) && Math.abs(rise) >= 1.5) {
+      // A shot plays roughly its height change in yards longer uphill.
+      const riseYards = Math.round(rise * 1.09361);
+
+      // The elevation model has about 90 m resolution, and a saved green
+      // coordinate can be wrong. A golf shot never climbs a quarter of its own
+      // length, so a larger figure is bad data, not a steep hole, and acting on
+      // it would hand out a driver for a wedge shot.
+      if (Math.abs(riseYards) > distanceYards * 0.25) {
+        adjustments.push({
+          yards: 0,
+          label: "elevation data here looks wrong, so I ignored it"
+        });
+      } else {
+        playingYards += riseYards;
+        adjustments.push({
+          yards: riseYards,
+          label: `${Math.abs(riseYards)} yards ${riseYards > 0 ? "uphill" : "downhill"}`
+        });
+      }
+    }
+
+    if (Number.isFinite(conditions.windMph) && conditions.windMph >= 4 && Number.isFinite(shotBearing) && Number.isFinite(conditions.windFromDegrees)) {
+      // Wind direction is reported as the direction it comes from, so a wind
+      // from the same bearing you are aiming at is a headwind.
+      const angle = toRadians(conditions.windFromDegrees - shotBearing);
+      const headComponent = conditions.windMph * Math.cos(angle);
+      const crossComponent = conditions.windMph * Math.sin(angle);
+      // Headwind hurts about twice as much as the same tailwind helps.
+      const windYards = Math.round(headComponent >= 0 ? headComponent * 1 : headComponent * 0.5);
+
+      if (Math.abs(windYards) >= 2) {
+        playingYards += windYards;
+        adjustments.push({
+          yards: windYards,
+          label: `${Math.abs(windYards)} yards for a ${Math.round(Math.abs(headComponent))} mph ${headComponent >= 0 ? "headwind" : "downwind"}`
+        });
+      }
+
+      if (Math.abs(crossComponent) >= 7) {
+        adjustments.push({
+          yards: 0,
+          label: `${Math.round(Math.abs(crossComponent))} mph crosswind from the ${crossComponent > 0 ? "right" : "left"}`
+        });
+      }
+    }
+
+    if (Number.isFinite(conditions.temperatureF)) {
+      // Cold, dense air costs roughly two yards per ten degrees below 70F.
+      const temperatureYards = Math.round((70 - conditions.temperatureF) / 10 * 2);
+
+      if (Math.abs(temperatureYards) >= 2) {
+        playingYards += temperatureYards;
+        adjustments.push({
+          yards: temperatureYards,
+          label: `${Math.abs(temperatureYards)} yards for ${conditions.temperatureF} degrees`
+        });
+      }
+    }
+  }
+
+  const lieAdjustment = LIE_ADJUSTMENTS[lie];
+
+  if (lieAdjustment && lieAdjustment.factor !== 0) {
+    const lieYards = Math.round(distanceYards * lieAdjustment.factor);
+
+    if (Math.abs(lieYards) >= 2) {
+      playingYards += lieYards;
+      adjustments.push({ yards: lieYards, label: `${Math.abs(lieYards)} yards from ${lieAdjustment.label}` });
+    }
+  }
+
+  return {
+    playingYards: Math.max(1, Math.round(playingYards)),
+    rawYards: Math.round(distanceYards),
+    adjustments: adjustments
+  };
+}
+
+function describePlayingConditions(conditions) {
+  if (!conditions) {
+    return "";
+  }
+
+  const parts = [];
+
+  if (Number.isFinite(conditions.temperatureF)) {
+    parts.push(`${conditions.temperatureF} degrees`);
+  }
+
+  if (Number.isFinite(conditions.windMph) && conditions.windMph >= 1) {
+    parts.push(`${conditions.windMph} mph wind from the ${compassName(conditions.windFromDegrees)}`);
+  }
+
+  return parts.join(", ");
+}
+
+function compassName(degrees) {
+  if (!Number.isFinite(degrees)) {
+    return "";
+  }
+
+  const names = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"];
+
+  return names[Math.round(degrees / 45) % 8];
 }
 
 function getLocationErrorMessage(error) {
@@ -5537,6 +5846,63 @@ function logShotFromForm() {
   renderShotClubOptions();
 }
 
+// Logging a shot by voice keeps the golfer's hands on the club. The spoken
+// distance is always yards, because that is how the caddie and the agent talk
+// about shots regardless of the display unit preference.
+function executeAgentLogShot(result) {
+  const club = normalizeClubName(result.payload.club || "");
+  const distanceYards = Math.round(Number(result.payload.distanceYards || 0));
+
+  if (!club) {
+    showVoiceAgentMessage(
+      result.message || "Tell me the club too, like: log a seven iron, one sixty five.",
+      true
+    );
+    return true;
+  }
+
+  if (!Number.isFinite(distanceYards) || distanceYards < 1 || distanceYards > 400) {
+    showVoiceAgentMessage(
+      `How far did that ${club} go? Say something like: log a ${club}, one fifty.`,
+      true
+    );
+    return true;
+  }
+
+  const lie = LIE_ADJUSTMENTS[result.payload.shotLie] ? result.payload.shotLie : (shotLieInput ? shotLieInput.value : "fairway");
+  // The shot log stores "good" for a shot that came off as planned, and only
+  // those shots teach a club distance, so the agent's wording is mapped here.
+  const shotResult = SPOKEN_SHOT_RESULTS[result.payload.shotResult] || "good";
+  const shots = getShotLog().slice();
+
+  shots.push({
+    time: new Date().toISOString(),
+    courseName: round.courseName || "",
+    hole: round.currentHole || 1,
+    par: getHolePar(round.currentHole || 1),
+    club: club,
+    distanceYards: distanceYards,
+    result: shotResult,
+    lie: lie,
+    direction: result.payload.shotDirection || "straight"
+  });
+
+  buzz();
+  saveShotLog(shots);
+  renderShotLogStatus();
+  renderShotHistorySummary();
+  renderClubProfileStatus();
+  renderShotClubOptions();
+
+  const learned = getEffectiveClubDistances().find(entry => entry.club === club);
+  const learnedNote = learned && learned.source === "learned"
+    ? ` Your ${club} is averaging ${learned.carryYards} yards over ${learned.shots} logged shots.`
+    : "";
+
+  showVoiceAgentMessage(`Logged: ${club}, ${distanceYards} yards, hole ${round.currentHole}.${learnedNote}`, result.speak);
+  return true;
+}
+
 async function fillShotDistanceFromGps() {
   const target = getCurrentHoleTarget();
 
@@ -5997,6 +6363,306 @@ function renderRoundHistory() {
   });
 }
 
+// -------------------------------
+// Round statistics
+// -------------------------------
+
+// Statistics follow the account holder. Each stored round is searched for that
+// name; rounds played before an identity was saved fall back to the first
+// player, which is how those rounds were recorded.
+function findMyNameInRound(entry, golfer) {
+  const players = Array.isArray(entry.players) ? entry.players : [];
+
+  if (golfer) {
+    return players.find(player => player.toLowerCase() === golfer.toLowerCase()) || "";
+  }
+
+  return players[0] || "";
+}
+
+function summarizeRoundForPlayer(entry, player) {
+  const scores = (entry.scores && entry.scores[player]) || {};
+  const stats = (entry.holeStats && entry.holeStats[player]) || {};
+  const pars = entry.holePars || {};
+  const summary = {
+    id: entry.id,
+    finishedAt: entry.finishedAt,
+    courseName: entry.courseName || "Unnamed course",
+    holesScored: 0,
+    strokes: 0,
+    par: 0,
+    putts: 0,
+    holesWithPutts: 0,
+    fairwaysHit: 0,
+    fairwayChances: 0,
+    greensHit: 0,
+    greenChances: 0,
+    byPar: {}
+  };
+
+  for (let hole = 1; hole <= (Number(entry.totalHoles) || 18); hole++) {
+    const score = Number(scores[hole]);
+    const holeStats = stats[hole];
+    const par = Number(pars[hole]) || 4;
+
+    if (Number.isInteger(score) && score > 0) {
+      summary.holesScored += 1;
+      summary.strokes += score;
+      summary.par += par;
+
+      if (!summary.byPar[par]) {
+        summary.byPar[par] = { holes: 0, strokes: 0, par: 0 };
+      }
+
+      summary.byPar[par].holes += 1;
+      summary.byPar[par].strokes += score;
+      summary.byPar[par].par += par;
+    }
+
+    if (holeStats && typeof holeStats === "object") {
+      if (Number.isFinite(Number(holeStats.putts))) {
+        summary.putts += Number(holeStats.putts);
+        summary.holesWithPutts += 1;
+      }
+
+      // A par 3 is not a driving hole, so it never counts as a fairway chance.
+      if (typeof holeStats.fairway === "boolean" && par >= 4) {
+        summary.fairwayChances += 1;
+        summary.fairwaysHit += holeStats.fairway ? 1 : 0;
+      }
+
+      if (typeof holeStats.gir === "boolean") {
+        summary.greenChances += 1;
+        summary.greensHit += holeStats.gir ? 1 : 0;
+      }
+    }
+  }
+
+  summary.toPar = summary.strokes - summary.par;
+  return summary;
+}
+
+function computeRoundStatistics() {
+  const history = getRoundHistory();
+  const golfer = getGolferName();
+  const named = history
+    .map(entry => ({ entry, player: findMyNameInRound(entry, golfer) }))
+    .filter(item => item.player !== "");
+
+  const player = golfer || (named.length > 0 ? named[named.length - 1].player : "");
+
+  const rounds = named
+    .map(item => summarizeRoundForPlayer(item.entry, item.player))
+    .filter(summary => summary.holesScored > 0)
+    .sort((a, b) => new Date(a.finishedAt) - new Date(b.finishedAt));
+
+  if (rounds.length === 0) {
+    return { player, rounds: [] };
+  }
+
+  const totals = rounds.reduce((acc, item) => {
+    acc.holesScored += item.holesScored;
+    acc.strokes += item.strokes;
+    acc.par += item.par;
+    acc.putts += item.putts;
+    acc.holesWithPutts += item.holesWithPutts;
+    acc.fairwaysHit += item.fairwaysHit;
+    acc.fairwayChances += item.fairwayChances;
+    acc.greensHit += item.greensHit;
+    acc.greenChances += item.greenChances;
+    return acc;
+  }, {
+    holesScored: 0,
+    strokes: 0,
+    par: 0,
+    putts: 0,
+    holesWithPutts: 0,
+    fairwaysHit: 0,
+    fairwayChances: 0,
+    greensHit: 0,
+    greenChances: 0
+  });
+
+  // Rounds of different lengths cannot be averaged directly, so every round is
+  // scaled to an 18-hole equivalent before comparison.
+  const scaled = rounds.map(item => ({
+    ...item,
+    per18Strokes: (item.strokes / item.holesScored) * 18,
+    per18ToPar: (item.toPar / item.holesScored) * 18,
+    per18Putts: item.holesWithPutts > 0 ? (item.putts / item.holesWithPutts) * 18 : null
+  }));
+
+  const complete = scaled.filter(item => item.holesScored >= 9);
+  const recent = scaled.slice(-5);
+  const previous = scaled.slice(-10, -5);
+  const puttingRounds = scaled.filter(item => item.per18Putts !== null);
+
+  const byPar = {};
+
+  rounds.forEach(item => {
+    Object.keys(item.byPar).forEach(par => {
+      if (!byPar[par]) {
+        byPar[par] = { holes: 0, strokes: 0, par: 0 };
+      }
+
+      byPar[par].holes += item.byPar[par].holes;
+      byPar[par].strokes += item.byPar[par].strokes;
+      byPar[par].par += item.byPar[par].par;
+    });
+  });
+
+  return {
+    player,
+    rounds: scaled,
+    roundsCounted: scaled.length,
+    holesScored: totals.holesScored,
+    scoringAverage: (totals.strokes / totals.holesScored) * 18,
+    averageToPar: (totals.strokes - totals.par) / totals.holesScored * 18,
+    bestRound: complete.length > 0
+      ? complete.slice().sort((a, b) => a.per18ToPar - b.per18ToPar)[0]
+      : null,
+    puttsPerRound: puttingRounds.length > 0
+      ? puttingRounds.reduce((sum, item) => sum + item.per18Putts, 0) / puttingRounds.length
+      : null,
+    puttsPerHole: totals.holesWithPutts > 0 ? totals.putts / totals.holesWithPutts : null,
+    fairwayPercent: totals.fairwayChances > 0 ? (totals.fairwaysHit / totals.fairwayChances) * 100 : null,
+    greenPercent: totals.greenChances > 0 ? (totals.greensHit / totals.greenChances) * 100 : null,
+    recentAverage: recent.length > 0
+      ? recent.reduce((sum, item) => sum + item.per18Strokes, 0) / recent.length
+      : null,
+    previousAverage: previous.length > 0
+      ? previous.reduce((sum, item) => sum + item.per18Strokes, 0) / previous.length
+      : null,
+    handicapEstimate: estimateHandicap(complete),
+    byPar
+  };
+}
+
+// A real Handicap Index needs each course's rating and slope, which this app
+// does not have. This uses the same shape - the best eight of the last twenty
+// differentials - but against par, and it is labeled an estimate everywhere.
+function estimateHandicap(rounds) {
+  const eligible = rounds.slice(-20);
+
+  if (eligible.length < 3) {
+    return null;
+  }
+
+  const differentials = eligible
+    .map(item => item.per18ToPar)
+    .sort((a, b) => a - b)
+    .slice(0, Math.max(1, Math.min(8, Math.round(eligible.length * 0.4))));
+
+  const average = differentials.reduce((sum, value) => sum + value, 0) / differentials.length;
+
+  return {
+    value: Math.max(0, average * 0.96),
+    roundsUsed: eligible.length,
+    roundsCounted: differentials.length
+  };
+}
+
+function renderStatistics() {
+  if (!statsRoundCount) {
+    return;
+  }
+
+  const stats = computeRoundStatistics();
+
+  if (!stats.rounds || stats.rounds.length === 0) {
+    statsPlayerTitle.textContent = "Your scoring";
+    statsRoundCount.textContent = "No finished rounds yet. Finish a round to start building statistics.";
+    [statsHandicap, statsScoringAverage, statsBestRound, statsPutts, statsFairways, statsGreens].forEach(element => {
+      if (element) {
+        element.textContent = "-";
+      }
+    });
+    statsTrend.textContent = "Finish a few rounds to see a trend.";
+    statsRoundList.textContent = "No finished rounds yet.";
+    statsParBreakdown.textContent = "No scored holes yet.";
+    return;
+  }
+
+  statsPlayerTitle.textContent = `${stats.player}'s scoring`;
+  statsRoundCount.textContent = `${stats.roundsCounted} finished ${stats.roundsCounted === 1 ? "round" : "rounds"} · ${stats.holesScored} scored holes`;
+
+  statsHandicap.textContent = stats.handicapEstimate
+    ? stats.handicapEstimate.value.toFixed(1)
+    : "-";
+  statsHandicapNote.textContent = stats.handicapEstimate
+    ? `Estimated from the best ${stats.handicapEstimate.roundsCounted} of your last ${stats.handicapEstimate.roundsUsed} rounds against par. An official index also needs course rating and slope.`
+    : "Finish at least three rounds of nine or more holes for an estimate.";
+
+  statsScoringAverage.textContent = stats.scoringAverage.toFixed(1);
+  statsBestRound.textContent = stats.bestRound
+    ? `${Math.round(stats.bestRound.per18Strokes)} (${formatToPar(Math.round(stats.bestRound.per18ToPar))})`
+    : "-";
+
+  statsPutts.textContent = stats.puttsPerRound !== null ? stats.puttsPerRound.toFixed(1) : "-";
+  statsFairways.textContent = stats.fairwayPercent !== null ? `${Math.round(stats.fairwayPercent)}%` : "-";
+  statsGreens.textContent = stats.greenPercent !== null ? `${Math.round(stats.greenPercent)}%` : "-";
+  statsAccuracyNote.textContent = stats.puttsPerHole !== null
+    ? `${stats.puttsPerHole.toFixed(2)} putts per hole across ${stats.roundsCounted} ${stats.roundsCounted === 1 ? "round" : "rounds"}.`
+    : "Record putts, fairways, and greens on the Active Round screen to build these numbers.";
+
+  if (stats.recentAverage !== null && stats.previousAverage !== null) {
+    const change = stats.recentAverage - stats.previousAverage;
+    const direction = change < -0.5 ? "better" : change > 0.5 ? "worse" : "steady";
+
+    statsTrend.textContent = direction === "steady"
+      ? `Steady: your last five rounds average ${stats.recentAverage.toFixed(1)}, about the same as the five before.`
+      : `Trending ${direction}: your last five rounds average ${stats.recentAverage.toFixed(1)} against ${stats.previousAverage.toFixed(1)} for the five before, a ${Math.abs(change).toFixed(1)} stroke difference.`;
+  } else if (stats.recentAverage !== null) {
+    statsTrend.textContent = `Your last ${Math.min(5, stats.roundsCounted)} ${stats.roundsCounted === 1 ? "round averages" : "rounds average"} ${stats.recentAverage.toFixed(1)} per 18 holes. Finish five more for a comparison.`;
+  }
+
+  statsRoundList.innerHTML = "";
+
+  stats.rounds.slice().reverse().slice(0, 10).forEach(item => {
+    const row = document.createElement("div");
+    row.className = "history-item";
+
+    const title = document.createElement("strong");
+    title.textContent = item.courseName;
+
+    const detail = document.createElement("span");
+    const date = new Date(item.finishedAt);
+    const puttText = item.holesWithPutts > 0 ? ` · ${item.putts} putts` : "";
+    detail.textContent = `${date.toLocaleDateString()} · ${item.holesScored} holes · ${item.strokes} (${formatToPar(item.toPar)})${puttText}`;
+
+    row.appendChild(title);
+    row.appendChild(detail);
+    statsRoundList.appendChild(row);
+  });
+
+  statsParBreakdown.innerHTML = "";
+
+  const parKeys = Object.keys(stats.byPar).map(Number).sort((a, b) => a - b);
+
+  if (parKeys.length === 0) {
+    statsParBreakdown.textContent = "No scored holes yet.";
+    return;
+  }
+
+  parKeys.forEach(par => {
+    const bucket = stats.byPar[par];
+    const row = document.createElement("div");
+    row.className = "history-item";
+
+    const title = document.createElement("strong");
+    title.textContent = `Par ${par}`;
+
+    const detail = document.createElement("span");
+    const average = bucket.strokes / bucket.holes;
+    const relative = (bucket.strokes - bucket.par) / bucket.holes;
+    detail.textContent = `${bucket.holes} holes · ${average.toFixed(2)} average · ${relative >= 0 ? "+" : ""}${relative.toFixed(2)} to par`;
+
+    row.appendChild(title);
+    row.appendChild(detail);
+    statsParBreakdown.appendChild(row);
+  });
+}
+
 function exportRoundHistory() {
   const history = getRoundHistory();
 
@@ -6303,6 +6969,11 @@ const accountSignedOut = document.getElementById("accountSignedOut");
 const accountSignedIn = document.getElementById("accountSignedIn");
 const accountEmailInput = document.getElementById("accountEmailInput");
 const accountEmailLabel = document.getElementById("accountEmailLabel");
+const accountNameInput = document.getElementById("accountNameInput");
+const accountNameLabel = document.getElementById("accountNameLabel");
+const golferNameInput = document.getElementById("golferNameInput");
+const golferNameStatus = document.getElementById("golferNameStatus");
+const saveGolferNameBtn = document.getElementById("saveGolferNameBtn");
 const sendLoginLinkBtn = document.getElementById("sendLoginLinkBtn");
 const syncNowBtn = document.getElementById("syncNowBtn");
 const signOutBtn = document.getElementById("signOutBtn");
@@ -6317,6 +6988,10 @@ signOutBtn.addEventListener("click", signOutOfAccount);
 accountExportBtn.addEventListener("click", function () {
   window.location.href = "/api/account/export";
 });
+
+if (saveGolferNameBtn) {
+  saveGolferNameBtn.addEventListener("click", saveGolferNameFromSettings);
+}
 deleteAccountBtn.addEventListener("click", deleteAccount);
 
 async function accountFetch(path, options = {}) {
@@ -6350,6 +7025,18 @@ async function refreshAccountState() {
     signedInEmail = body.email;
     accountHint.textContent = "Your rounds, clubs, and shots sync to your account.";
     accountEmailLabel.textContent = body.email;
+
+    // The account is the authority on who the golfer is, so a second device
+    // adopts the same name the moment it signs in.
+    if (body.name) {
+      saveGolferName(body.name);
+    }
+
+    if (accountNameLabel) {
+      accountNameLabel.textContent = getGolferName() || "Not set";
+    }
+
+    renderGolferName();
     accountSignedIn.classList.remove("hidden");
     accountSignedOut.classList.add("hidden");
     return;
@@ -6363,9 +7050,15 @@ async function refreshAccountState() {
 
 async function requestLoginLink() {
   const email = accountEmailInput.value.trim();
+  const name = accountNameInput ? accountNameInput.value.trim() : "";
+
+  if (name.length < 2) {
+    accountStatus.textContent = "Enter the name you want the caddie to call you.";
+    return;
+  }
 
   if (!email) {
-    accountStatus.textContent = "Enter your email address first.";
+    accountStatus.textContent = "Enter your email address next.";
     return;
   }
 
@@ -6374,12 +7067,85 @@ async function requestLoginLink() {
   const { ok, body } = await accountFetch("/login-link", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: email })
+    body: JSON.stringify({ email: email, name: name })
   });
+
+  if (ok) {
+    // Save it now so the caddie knows the golfer even before the link is used.
+    saveGolferName(name);
+    renderGolferName();
+  }
 
   accountStatus.textContent = ok
     ? body.message
     : body.error || "That sign-in link could not be sent.";
+}
+
+function renderGolferName() {
+  const name = getGolferName();
+
+  if (golferNameInput && document.activeElement !== golferNameInput) {
+    golferNameInput.value = name;
+  }
+
+  if (accountNameInput && !accountNameInput.value) {
+    accountNameInput.value = name;
+  }
+
+  if (accountNameLabel) {
+    accountNameLabel.textContent = name || "Not set";
+  }
+
+  if (!golferNameStatus) {
+    return;
+  }
+
+  if (!name) {
+    golferNameStatus.textContent = "Add your name so the caddie knows who \"I\" and \"my\" mean.";
+    return;
+  }
+
+  const inRound = round.players.some(player => player.toLowerCase() === name.toLowerCase());
+
+  golferNameStatus.textContent = round.players.length > 0 && !inRound
+    ? `Saved. This round has no player called ${name}, so the caddie will ask who you mean.`
+    : `Saved. The caddie treats "I" and "my" as ${name}.`;
+}
+
+async function saveGolferNameFromSettings() {
+  const name = saveGolferName(golferNameInput ? golferNameInput.value : "");
+
+  if (!name) {
+    golferNameStatus.textContent = "Enter the name you want the caddie to use.";
+    return;
+  }
+
+  renderGolferName();
+  renderStatistics();
+
+  if (!accountsEnabled || !signedInEmail) {
+    return;
+  }
+
+  const { ok, body } = await accountFetch("/name", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: name })
+  });
+
+  if (ok) {
+    golferNameStatus.textContent = `Saved to your account. The caddie treats "I" and "my" as ${body.name}.`;
+  }
+}
+
+// A round the account holder plays should already list them, so "my score"
+// resolves without retyping the name every time.
+function prefillGolferAsPlayer() {
+  const name = getGolferName();
+
+  if (name && playerNamesInput && !playerNamesInput.value.trim()) {
+    playerNamesInput.value = name;
+  }
 }
 
 async function signOutOfAccount() {

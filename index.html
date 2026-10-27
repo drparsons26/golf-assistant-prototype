@@ -114,11 +114,102 @@
             <strong>Scorecard</strong>
             <small>Totals and leader</small>
           </button>
+          <button class="tile" type="button" data-nav-target="stats">
+            <span class="tile-icon"><svg aria-hidden="true"><use href="#i-card" /></svg></span>
+            <strong>Statistics</strong>
+            <small>Trends and handicap</small>
+          </button>
           <button class="tile" type="button" data-nav-target="course-library-panel">
             <span class="tile-icon"><svg aria-hidden="true"><use href="#i-pin" /></svg></span>
             <strong>Courses</strong>
             <small>Search and load</small>
           </button>
+        </div>
+      </section>
+
+      <!-- ============ STATISTICS ============ -->
+      <section id="statsSection" class="screen hidden">
+        <div class="page-head">
+          <button class="icon-btn" type="button" data-nav-target="home" aria-label="Back to home">
+            <svg aria-hidden="true"><use href="#i-chev-left" /></svg>
+          </button>
+          <div>
+            <h2>Statistics</h2>
+            <p>Trends from your finished rounds.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon accent"><svg aria-hidden="true"><use href="#i-card" /></svg></span>
+            <div>
+              <h3 id="statsPlayerTitle">Your scoring</h3>
+              <p id="statsRoundCount">No finished rounds yet.</p>
+            </div>
+          </div>
+          <div class="stat-strip" role="group" aria-label="Scoring summary">
+            <div class="stat">
+              <strong id="statsHandicap">-</strong>
+              <span>Handicap estimate</span>
+            </div>
+            <div class="stat">
+              <strong id="statsScoringAverage">-</strong>
+              <span>Scoring average</span>
+            </div>
+            <div class="stat">
+              <strong id="statsBestRound">-</strong>
+              <span>Best round</span>
+            </div>
+          </div>
+          <p id="statsHandicapNote" class="status-line">A handicap estimate needs course rating and slope to be official. This is your average best scores against par.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg aria-hidden="true"><use href="#i-target" /></svg></span>
+            <div>
+              <h3>Putting and accuracy</h3>
+              <p>Per round, from the stats you record on each hole.</p>
+            </div>
+          </div>
+          <div class="stat-strip" role="group" aria-label="Putting and accuracy">
+            <div class="stat">
+              <strong id="statsPutts">-</strong>
+              <span>Putts per round</span>
+            </div>
+            <div class="stat">
+              <strong id="statsFairways">-</strong>
+              <span>Fairways hit</span>
+            </div>
+            <div class="stat">
+              <strong id="statsGreens">-</strong>
+              <span>Greens in regulation</span>
+            </div>
+          </div>
+          <p id="statsAccuracyNote" class="status-line">Record putts, fairways, and greens on the Active Round screen to build these numbers.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg aria-hidden="true"><use href="#i-play" /></svg></span>
+            <div>
+              <h3>Recent form</h3>
+              <p>Your last five rounds against the ones before them.</p>
+            </div>
+          </div>
+          <p id="statsTrend" class="status-line">Finish a few rounds to see a trend.</p>
+          <div id="statsRoundList" class="history-list">No finished rounds yet.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon"><svg aria-hidden="true"><use href="#i-pin" /></svg></span>
+            <div>
+              <h3>By par</h3>
+              <p>Average strokes against par on each hole type.</p>
+            </div>
+          </div>
+          <div id="statsParBreakdown" class="history-list">No scored holes yet.</div>
         </div>
       </section>
 
@@ -314,6 +405,7 @@
             <div><h5>Scoring</h5><p>“I had par and Sam had bogey.”</p></div>
             <div><h5>Fixes</h5><p>“Change Sam on hole one to six.”</p></div>
             <div><h5>Caddie</h5><p>“I have 150 yards, what should I hit?”</p></div>
+            <div><h5>Shot log</h5><p>“Log a seven iron, 165, straight.”</p></div>
             <div><h5>Yardage</h5><p>“How far to the green?”</p></div>
             <div><h5>Navigation</h5><p>“Go to hole five.”</p></div>
             <div><h5>Status</h5><p>“Who is winning?”</p></div>
@@ -510,6 +602,24 @@
           </div>
         </div>
 
+        <div class="card" id="golferCard">
+          <div class="card-head">
+            <span class="card-icon accent"><svg aria-hidden="true"><use href="#i-play" /></svg></span>
+            <div>
+              <h3>Your name</h3>
+              <p>Who the caddie means by "I", "me", and "my".</p>
+            </div>
+          </div>
+          <label class="field">
+            <span class="field-label">Name</span>
+            <input id="golferNameInput" type="text" autocomplete="name" maxlength="60" placeholder="The name on your scorecard" />
+          </label>
+          <div class="btn-row">
+            <button id="saveGolferNameBtn" class="btn btn-primary btn-sm" type="button">Save name</button>
+          </div>
+          <p id="golferNameStatus" class="status-line">Statistics and your club distances follow this name.</p>
+        </div>
+
         <div class="card" id="accountCard">
           <div class="card-head">
             <span class="card-icon accent"><svg aria-hidden="true"><use href="#i-home" /></svg></span>
@@ -521,16 +631,22 @@
 
           <div id="accountSignedOut" class="hidden">
             <label class="field">
+              <span class="field-label">Your name</span>
+              <input id="accountNameInput" type="text" autocomplete="name" maxlength="60" placeholder="The name the caddie should use" />
+            </label>
+            <label class="field">
               <span class="field-label">Email</span>
               <input id="accountEmailInput" type="email" autocomplete="email" placeholder="you@example.com" />
             </label>
             <div class="btn-row">
               <button id="sendLoginLinkBtn" class="btn btn-primary" type="button">Email me a sign-in link</button>
             </div>
+            <p class="status-line">Your name tells the caddie who "I" and "my" mean, and it is the player name used on your scorecard.</p>
           </div>
 
           <div id="accountSignedIn" class="hidden">
             <div class="info-row"><span>Signed in as</span><strong id="accountEmailLabel">—</strong></div>
+            <div class="info-row"><span>Caddie calls you</span><strong id="accountNameLabel">—</strong></div>
             <div class="btn-row">
               <button id="syncNowBtn" class="btn btn-primary" type="button">Sync now</button>
               <button id="accountExportBtn" class="btn btn-ghost" type="button">Export account</button>

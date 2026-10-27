@@ -77,6 +77,7 @@ export async function initializeSchema() {
     CREATE TABLE IF NOT EXISTS users (
       id BIGSERIAL PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
+      display_name TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       last_seen_at TIMESTAMPTZ
     );
@@ -84,6 +85,7 @@ export async function initializeSchema() {
     CREATE TABLE IF NOT EXISTS login_links (
       token_hash TEXT PRIMARY KEY,
       email TEXT NOT NULL,
+      display_name TEXT,
       expires_at TIMESTAMPTZ NOT NULL,
       used_at TIMESTAMPTZ
     );
@@ -151,10 +153,98 @@ export async function initializeSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (user_id, id)
     );
+
+    CREATE TABLE IF NOT EXISTS usage_counters (
+      scope TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      utc_day DATE NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (scope, subject, utc_day)
+    );
+  `);
+
+  // Databases created before golfers were asked for a name.
+  await query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT;
+    ALTER TABLE login_links ADD COLUMN IF NOT EXISTS display_name TEXT;
   `);
 
   await migrateOwnership();
   return true;
+}
+
+// Paid-endpoint budgets live in the database so a restart, a sleeping free
+// instance, or a second web process cannot hand out the same allowance twice.
+// Every subject in the list must have room; the whole claim is one transaction,
+// so a request rejected by the server ceiling does not consume a personal call.
+export async function consumeUsage(scope, subjects) {
+  for (const entry of subjects) {
+    if (!Number.isFinite(entry.limit) || entry.limit <= 0) {
+      return { allowed: false, deniedSubject: entry.subject };
+    }
+  }
+
+  const client = await getPool().connect();
+
+  try {
+    await client.query("BEGIN");
+
+    for (const { subject, limit } of subjects) {
+      const claimed = await client.query(
+        `INSERT INTO usage_counters (scope, subject, utc_day, used)
+         VALUES ($1, $2, (now() AT TIME ZONE 'utc')::date, 1)
+         ON CONFLICT (scope, subject, utc_day)
+         DO UPDATE SET used = usage_counters.used + 1
+         WHERE usage_counters.used < $3
+         RETURNING used`,
+        [scope, subject, limit]
+      );
+
+      if (claimed.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return { allowed: false, deniedSubject: subject };
+      }
+    }
+
+    await client.query("COMMIT");
+    return { allowed: true };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function readUsageSummary() {
+  const result = await query(
+    `SELECT scope,
+            COALESCE(SUM(used) FILTER (WHERE subject = 'server'), 0)::int AS server_used,
+            COUNT(*) FILTER (WHERE subject LIKE 'user:%')::int AS accounts,
+            COUNT(*) FILTER (WHERE subject LIKE 'device:%')::int AS devices
+     FROM usage_counters
+     WHERE utc_day = (now() AT TIME ZONE 'utc')::date
+     GROUP BY scope`
+  );
+
+  const summary = {};
+
+  result.rows.forEach(row => {
+    summary[row.scope] = {
+      serverUsed: row.server_used,
+      accounts: row.accounts,
+      devices: row.devices
+    };
+  });
+
+  return summary;
+}
+
+export async function pruneUsageCounters() {
+  await query(
+    `DELETE FROM usage_counters
+     WHERE utc_day < (now() AT TIME ZONE 'utc')::date - INTEGER '7'`
+  );
 }
 
 // Earlier builds keyed rounds, shots, and courses on a client-supplied id
@@ -225,7 +315,7 @@ export function isValidEmail(email) {
   return /^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email);
 }
 
-export async function createLoginLink(email) {
+export async function createLoginLink(email, displayName) {
   const token = createToken();
   const expiresAt = new Date(Date.now() + LOGIN_LINK_MINUTES * 60 * 1000);
 
@@ -242,8 +332,8 @@ export async function createLoginLink(email) {
   }
 
   await query(
-    `INSERT INTO login_links (token_hash, email, expires_at) VALUES ($1, $2, $3)`,
-    [hashToken(token), email, expiresAt]
+    `INSERT INTO login_links (token_hash, email, display_name, expires_at) VALUES ($1, $2, $3, $4)`,
+    [hashToken(token), email, String(displayName || "").trim().slice(0, 60), expiresAt]
   );
 
   return { token, expiresAt, minutes: LOGIN_LINK_MINUTES };
@@ -254,7 +344,7 @@ export async function redeemLoginLink(token) {
   const linkResult = await query(
     `UPDATE login_links SET used_at = now()
      WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
-     RETURNING email`,
+     RETURNING email, display_name`,
     [tokenHash]
   );
 
@@ -262,12 +352,16 @@ export async function redeemLoginLink(token) {
     return null;
   }
 
-  const email = linkResult.rows[0].email;
+  const { email, display_name: displayName } = linkResult.rows[0];
+  // The name given on the form wins, so a golfer can correct it by signing in
+  // again; an empty one never erases the name already on the account.
   const userResult = await query(
-    `INSERT INTO users (email, last_seen_at) VALUES ($1, now())
-     ON CONFLICT (email) DO UPDATE SET last_seen_at = now()
-     RETURNING id, email`,
-    [email]
+    `INSERT INTO users (email, display_name, last_seen_at) VALUES ($1, NULLIF($2, ''), now())
+     ON CONFLICT (email) DO UPDATE
+       SET last_seen_at = now(),
+           display_name = COALESCE(NULLIF($2, ''), users.display_name)
+     RETURNING id, email, display_name`,
+    [email, String(displayName || "").trim()]
   );
   const user = userResult.rows[0];
   const sessionToken = createToken();
@@ -289,10 +383,25 @@ export async function getUserForSession(token) {
   }
 
   const result = await query(
-    `SELECT u.id, u.email FROM sessions s
+    `SELECT u.id, u.email, u.display_name FROM sessions s
      JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = $1 AND s.expires_at > now()`,
     [hashToken(token)]
+  );
+
+  return result.rowCount === 0 ? null : result.rows[0];
+}
+
+export async function setUserDisplayName(userId, displayName) {
+  const cleaned = String(displayName || "").trim().slice(0, 60);
+
+  if (!cleaned) {
+    return null;
+  }
+
+  const result = await query(
+    `UPDATE users SET display_name = $2 WHERE id = $1 RETURNING id, email, display_name`,
+    [userId, cleaned]
   );
 
   return result.rowCount === 0 ? null : result.rows[0];

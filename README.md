@@ -129,7 +129,7 @@ Recommendations can use a spoken distance or, when available, GPS distance to th
 
 Club choice is personal when data exists. The app picks the shortest club that still covers the distance from the golfer's own distances, and only falls back to the general chart when no personal data exists. The spoken reason states where the number came from: a saved profile distance or a learned distance from logged shots.
 
-Wind, weather, elevation, lie, and pin location are still not fetched, so advice remains a starting estimate for those conditions.
+Advice is adjusted for measured conditions. Before a club call the app asks its own `/api/conditions` endpoint for wind, temperature, and ground elevation from [Open-Meteo](https://open-meteo.com/), which needs no API key. The measured yardage becomes a playing yardage: the elevation rise between the golfer and the green in yards, roughly a yard per mph of headwind and half that downwind, two yards per ten degrees away from 70F, and a penalty for the selected lie. Each adjustment is named in the answer, and a crosswind above 7 mph is called out without changing the number. Elevation that exceeds a quarter of the shot length is treated as bad map data and ignored rather than trusted. Pin position is still unknown, so the call remains a starting estimate.
 
 ### Personal Club Distances and Shot Learning
 
@@ -138,6 +138,20 @@ Settings has a club-distance editor. Each row is a club name and a carry distanc
 The Active Round screen has a shot log. Each entry records club, distance, result (as planned, short, or long), miss direction, lie, course, and hole. A club's distance is learned from the median of its shots marked "as planned" once it has at least three of them, and a learned distance overrides the manually saved one for that club. Once a club has three logged shots and misses to one side in at least half of them, the caddie says so with its recommendation. Shot history can be exported as JSON or cleared in Settings. The log keeps the most recent 500 shots.
 
 After a club recommendation, the shot-log club and distance fields are prefilled so logging the shot takes one tap.
+
+Shots can also be logged by voice. "Log a seven iron, 165, straight" or "I hit pitching wedge 120 and came up short out of the rough" records the shot through the `log_shot` action, filling club, distance, result, lie, and direction from what was said. A shot reported with no distance is refused rather than guessed. Score language is never treated as a shot: "I made a five" scores the hole, "I hit five iron 180" logs a shot.
+
+### Who the Caddie Thinks You Are
+
+Creating an account requires a name, and that name is the golfer's identity everywhere: "I", "me", and "my" in speech, the player the statistics follow, and the name prefilled into round setup. It is stored with the account, so signing in on a second phone adopts the same identity without retyping it, and it can be changed under **Settings → Your name**.
+
+A named player always beats a pronoun, so "what did Sam shoot" answers about Sam even when Sam is the one speaking the request. The golfer no longer has to be the first player in the round for pronouns to work. When the account holder is not playing in the current round, the caddie asks who is meant instead of guessing.
+
+### Statistics
+
+The Statistics screen aggregates finished rounds for the account holder. Rounds of different lengths are scaled to an 18-hole equivalent before being averaged, so a nine-hole round does not distort a scoring average. It reports scoring average, best round, putts per round and per hole, fairways hit, greens in regulation, a five-round form trend, a per-round list, and average strokes against par for par 3s, 4s, and 5s. Par 3s are excluded from fairway chances.
+
+The handicap figure is an estimate and is labeled as one. It follows the shape of a Handicap Index - the best differentials of the last twenty rounds, averaged and multiplied by 0.96 - but measures scores against par rather than against course rating and slope, which the app does not have. At least three rounds of nine or more holes are required before any number is shown.
 
 ### Persistence, Accounts, and Installable Web App
 
@@ -289,6 +303,7 @@ A deployed build is only confirmed when `/api/health` responds and the deploy's 
 | Endpoint | Behavior |
 | --- | --- |
 | `GET /api/health` | Reports the browser-facing service, access, pause, and account state |
+| `GET /api/conditions` | Returns wind, temperature, and elevation for a position and target from Open-Meteo |
 | `POST /api/access` | Exchanges or clears the shared access code using an `HttpOnly` cookie |
 | `POST /api/voice-agent` | Accepts transcript, round state, and optional client metadata; returns a structured action |
 | `POST /api/transcribe` | Accepts recorded audio and returns a transcript |
@@ -298,7 +313,8 @@ A deployed build is only confirmed when `/api/health` responds and the deploy's 
 | `POST /api/account/login-link` | Emails (or logs) a single-use sign-in link |
 | `GET /signin?token=` | Shows a confirmation page without setting a cookie |
 | `POST /signin` | Redeems a confirmed sign-in link and sets the session cookie |
-| `GET /api/account` | Reports whether this device is signed in |
+| `GET /api/account` | Reports whether this device is signed in, and the golfer's name |
+| `POST /api/account/name` | Updates the name the caddie uses for the signed-in golfer |
 | `POST /api/account/sync` | Pushes device data and returns the merged account data |
 | `GET /api/account/export` | Downloads everything in the account as JSON |
 | `DELETE /api/account` | Deletes the account and all personal rows |
@@ -311,15 +327,17 @@ Voice-agent JSON bodies are limited to 256 KiB and audio bodies to 12 MiB. OpenA
 
 `/api/voice-agent`, `/api/transcribe`, and the GOLFAPI proxy require an access grant when `APP_ACCESS_TOKEN` is set. The browser submits the code once to `/api/access` and receives an `HttpOnly`, `SameSite=Lax`, `Secure` cookie containing a one-way digest, not the shared code. Programmatic clients can still send the code in `X-App-Token`. A missing or wrong grant returns `401` with `code: "access_code_required"`. `/api/health` stays open but exposes no model or provider-key details.
 
-AI, GOLFAPI, and account/auth traffic use separate in-memory counters. Defaults are 30 AI requests per rolling five minutes and 400 per client/day; 60 GOLFAPI requests per five minutes and 600/day; and 12 account/auth requests per 15 minutes and 60/day. Exceeding a limit returns `429`. `TRUSTED_PROXY_HOPS` must match the deployment; forwarded addresses are ignored by default so a direct client cannot rotate a forged `X-Forwarded-For` value. A restart or second instance resets these counters.
+Daily budgets are per golfer and survive a restart. When a database is configured, each paid call claims an allowance from the `usage_counters` table in one transaction: one row for the caller - the signed-in account, or a hashed device identifier when signed out - and one for the server-wide ceiling. A request rejected by the ceiling does not spend a personal call. Because the counters live in Postgres, a redeploy, a sleeping free instance, or a second web process cannot hand the same allowance out twice; without a database, or if it stops answering, the server falls back to in-memory counters rather than allowing requests through uncounted. Raw addresses are never stored: a signed-out device is identified only by a SHA-256 digest.
 
-The GOLFAPI proxy forwards only the query parameters the app uses, limits identifiers and response size, requires valid JSON, and caches successful responses in memory: 30 minutes for club searches and 12 hours for course and coordinate data, capped at 120 entries and 1 MiB per entry. The browser also caches a loaded course bundle for the session.
+Short-window burst limits stay in memory by design, since they guard a five-minute window and must answer without a database round trip. Defaults are 30 AI requests per five minutes and 400 per day; 60 GOLFAPI requests per five minutes and 600 per day; 40 conditions requests per five minutes and 400 per day; and 12 account/auth requests per 15 minutes and 60 per day. Exceeding a limit returns `429`, and a signed-in golfer who hits their own daily limit is told it is theirs rather than the server's. `TRUSTED_PROXY_HOPS` must match the deployment; forwarded addresses are ignored by default so a direct client cannot rotate a forged `X-Forwarded-For` value.
+
+The GOLFAPI proxy forwards only the query parameters the app uses, limits identifiers and response size, requires valid JSON, and caches successful responses in memory: 30 minutes for club searches, 12 hours for course and coordinate data, and 10 minutes for weather, capped at 120 entries and 1 MiB per entry. The browser also caches a loaded course bundle for the session and holds conditions for ten minutes. Open-Meteo needs no key and is free; its limits exist to be a good neighbour to that service.
 
 Each AI-first voice request can incur OpenAI usage; recorded-audio transcription can incur separate usage. Reusing locally saved targets permits GPS calculations without refetching the course.
 
 ### Spending Ceilings and the Kill Switch
 
-Per-client limits stop one device from flooding the server; they do not cap the bill. Two server-wide daily ceilings do that: `AI_GLOBAL_DAILY_LIMIT` (default 1500) across `/api/voice-agent` and `/api/transcribe`, and `GOLFAPI_GLOBAL_DAILY_LIMIT` (default 2000) across the proxy. When a ceiling is reached, further calls return `429` with `code: "server_budget_reached"` until midnight UTC, and the app says so instead of failing vaguely. Scoring, the scorecard, GPS distances, and saved course data keep working the whole time, because they never touch the server.
+Per-client limits stop one device from flooding the server; they do not cap the bill. Two server-wide daily ceilings do that: `AI_GLOBAL_DAILY_LIMIT` (default 1500) across `/api/voice-agent` and `/api/transcribe`, and `GOLFAPI_GLOBAL_DAILY_LIMIT` (default 2000) across the proxy. When a ceiling is reached, further calls return `429` with `code: "server_budget_reached"` until midnight UTC, and the app says so instead of failing vaguely. `GET /api/admin/usage` reports whether the counters are coming from the database or memory, plus how many accounts and devices spent anything today. Scoring, the scorecard, GPS distances, and saved course data keep working the whole time, because they never touch the server.
 
 The kill switch pauses all paid endpoints at once. Set `API_PAUSED=true` to start paused, or flip it at runtime without a redeploy:
 
@@ -375,9 +393,9 @@ Schema creation and ownership migration run idempotently at startup. Remote Post
 | --- | --- |
 | `index.html` | Screens, forms, navigation, and app structure |
 | `style.css` | Design tokens, light/dark themes, and all screen styling |
-| `app.js` | Round state, UI, speech, action validation, GPS, course loading, and local storage |
+| `app.js` | Round state, UI, speech, action validation, GPS, conditions, statistics, course loading, and local storage |
 | `server.mjs` | Static hosting, environment loading, OpenAI calls, schema, transcription, GOLFAPI proxy, and account routes |
-| `db.mjs` | Postgres pool, table creation, sign-in tokens, sessions, and sync queries |
+| `db.mjs` | Postgres pool, table creation, sign-in tokens, sessions, sync queries, and durable usage counters |
 | `package.json` | Project metadata and start/dev scripts |
 | `.env.example` | Environment-variable template without credentials |
 | `.gitignore` | Excludes local `.env`, dependencies, and selected logs |
@@ -425,12 +443,13 @@ git diff --check
 Before expanding beyond prototype testing, remaining work includes:
 
 - A real mapped hole view. The app shows distances, not course layouts.
-- Wind, lie, elevation, and other contextual inputs for caddie advice.
+- Pin position, which no data source here provides, and a ball flight model better than the per-condition rules of thumb the caddie uses now.
 - Streaming or Realtime conversation for smoother voice interaction.
 - Conversation memory and richer conflict handling for accounts syncing offline changes.
-- Statistics across rounds. Putts, fairways, and greens are recorded per round but not yet aggregated into trends or a handicap.
-- Per-user paid-endpoint quotas and durable cost counters. Accounts identify synced data, but OpenAI/GOLFAPI access still uses one shared code and in-memory limits.
-- Voice control for logging shots; shots are logged through the Active Round form today.
+- Course rating and slope, which a real Handicap Index requires; the app shows an estimate against par instead.
+- A spending cap measured in money rather than requests, and alerting when a ceiling is reached.
 - Broader automated tests, native store packaging, and final commercial/provider-license review.
 
-The app does not collect a centralized dataset of conversations. With an account, finished rounds, courses, club distances, and shot history sync to PostgreSQL; without one, they remain in browser storage. Voice transcripts and current-round context are sent to OpenAI for each AI request, and audio is sent for transcription when that fallback is used. Smart glasses, scheduled autonomous improvements, and email reports remain future ideas, not implemented features.
+Sign-in email delivery is implemented but unconfigured on the live service: without `RESEND_API_KEY` and `LOGIN_EMAIL_FROM`, links are written to the server log, which only works while the operator is the only tester.
+
+The app does not collect a centralized dataset of conversations. With an account, finished rounds, courses, club distances, and shot history sync to PostgreSQL; without one, they remain in browser storage. An account also stores the golfer's name and email address. Voice transcripts and current-round context are sent to OpenAI for each AI request, and audio is sent for transcription when that fallback is used. The server sends an approximate position to Open-Meteo for weather and elevation, rounded to about 100 m and never accompanied by any identifier. Smart glasses, scheduled autonomous improvements, and email reports remain future ideas, not implemented features.
