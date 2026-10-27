@@ -353,16 +353,25 @@ async function handleLoginLinkRequest(req, res, url) {
 
   const { token, minutes } = created;
   const link = `${baseUrl}/signin?token=${encodeURIComponent(token)}`;
-  const delivered = await sendLoginEmail(email, link, minutes);
+  const delivery = await sendLoginEmail(email, link, minutes);
 
-  if (!delivered) {
+  if (delivery === "failed") {
+    // The link is a bearer credential. A configured deployment must never fall
+    // back to writing it somewhere the requester cannot reach.
+    sendJson(res, 502, {
+      error: "The sign-in email could not be sent right now. Try again in a moment."
+    });
+    return;
+  }
+
+  if (delivery === "unconfigured") {
     console.log(`Sign-in link for ${email} (valid ${minutes} minutes): ${link}`);
   }
 
   sendJson(res, 200, {
     sent: true,
-    delivery: delivered ? "email" : "server_log",
-    message: delivered
+    delivery: delivery === "sent" ? "email" : "server_log",
+    message: delivery === "sent"
       ? `Check ${email} for a sign-in link. It expires in ${minutes} minutes.`
       : `Email delivery is not configured on this server, so the link was written to the server log. It expires in ${minutes} minutes.`
   });
@@ -373,7 +382,7 @@ async function sendLoginEmail(email, link, minutes) {
   const from = String(process.env.LOGIN_EMAIL_FROM || "").trim();
 
   if (!apiKey || !from) {
-    return false;
+    return "unconfigured";
   }
 
   try {
@@ -388,18 +397,19 @@ async function sendLoginEmail(email, link, minutes) {
         to: [email],
         subject: "Your Golf Assistant sign-in link",
         text: `Tap this link to sign in. It expires in ${minutes} minutes.\n\n${link}\n\nIf you did not request this, ignore this email.`
-      })
+      }),
+      signal: AbortSignal.timeout(15000)
     });
 
     if (!response.ok) {
       console.error("Sign-in email failed:", response.status, (await response.text()).slice(0, 200));
-      return false;
+      return "failed";
     }
 
-    return true;
+    return "sent";
   } catch (error) {
     console.error("Sign-in email error:", error.message);
-    return false;
+    return "failed";
   }
 }
 
