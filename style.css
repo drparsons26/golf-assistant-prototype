@@ -1679,3 +1679,169 @@ textarea:focus {
 @media (prefers-color-scheme: dark) {
   .info-link strong { color: var(--green-500); }
 }
+
+/* -------------------------------
+   Glance view
+   Built to be read at arm's length, in sunlight, without interaction:
+   maximum contrast, one number that dominates, and touch targets large
+   enough for a gloved thumb.
+   ------------------------------- */
+
+.glance {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2vh;
+  padding: max(env(safe-area-inset-top), 16px) 16px max(env(safe-area-inset-bottom), 16px);
+  background: #04120b;
+  color: #ffffff;
+  text-align: center;
+}
+
+.glance-exit {
+  position: absolute;
+  top: max(env(safe-area-inset-top), 12px);
+  right: 12px;
+  min-height: 44px;
+  padding: 10px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  background: transparent;
+  color: #ffffff;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.glance-top {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.glance-step {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  background: transparent;
+  color: #ffffff;
+}
+
+.glance-step svg {
+  width: 30px;
+  height: 30px;
+  fill: currentColor;
+}
+
+.glance-hole {
+  display: flex;
+  flex-direction: column;
+  min-width: 108px;
+}
+
+.glance-hole-number {
+  font-size: clamp(2.6rem, 11vw, 4rem);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.glance-hole-par {
+  margin-top: 4px;
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.glance-distance {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.glance-number {
+  font-size: clamp(5.5rem, 34vw, 11rem);
+  font-weight: 800;
+  line-height: 0.9;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.glance-unit {
+  margin-top: 6px;
+  font-size: 1.05rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.glance-club {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 22px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 20px;
+  background: rgba(25, 160, 98, 0.18);
+  max-width: 92vw;
+}
+
+.glance-club-name {
+  font-size: clamp(1.8rem, 8vw, 2.6rem);
+  font-weight: 700;
+  line-height: 1.05;
+}
+
+.glance-club-reason {
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.glance-edges {
+  display: flex;
+  gap: 40px;
+}
+
+.glance-edges div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.glance-edges span {
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.glance-edges strong {
+  font-size: 1.9rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.glance-status {
+  margin: 0;
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.glance-status.weak {
+  color: #ffd27d;
+}
+
+/* A landscape phone on a cart mount has almost no vertical room. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .glance { gap: 1vh; }
+  .glance-number { font-size: clamp(4rem, 22vh, 7rem); }
+  .glance-club { padding: 8px 16px; }
+  .glance-edges { gap: 28px; }
+}

@@ -18,6 +18,7 @@ The interface follows the patterns that leading golf apps (Arccos, Hole19, 18Bir
 - A floating microphone button that stays reachable while scrolling and turns red while listening.
 - A vertical scorecard with a totals panel and per-hole cards. Scores use the conventional notation: circle for birdie, double circle for eagle or better, square for bogey, double square for double bogey or worse, plain text for par. The current hole is outlined.
 - A yardage screen with front, center, and back read out in large figures, plus collapsible editors for green coordinates and hazards.
+- A **glance view**, opened from the distance card on the active round: a full-screen, high-contrast layout showing the hole number and par, the center-green distance as the largest element on screen, the club the caddie would pick and why, and front/back distances beneath. It refreshes every two seconds from the round's existing GPS watch, holds the screen awake, and carries previous/next hole buttons sized for a gloved thumb. The layout reflows for a landscape phone on a cart mount, which is why the manifest no longer locks the app to portrait. Nothing on it needs to be tapped to stay current.
 - A Settings screen grouping server access, the club-distance editor, and shot history.
 - Bottom navigation between Home, Scorecard, Yardage, Round, and More.
 

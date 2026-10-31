@@ -147,6 +147,21 @@ const statsAccuracyNote = document.getElementById("statsAccuracyNote");
 const statsTrend = document.getElementById("statsTrend");
 const statsRoundList = document.getElementById("statsRoundList");
 const statsParBreakdown = document.getElementById("statsParBreakdown");
+const glanceSection = document.getElementById("glanceSection");
+const glanceHole = document.getElementById("glanceHole");
+const glancePar = document.getElementById("glancePar");
+const glanceDistance = document.getElementById("glanceDistance");
+const glanceUnit = document.getElementById("glanceUnit");
+const glanceClub = document.getElementById("glanceClub");
+const glanceClubReason = document.getElementById("glanceClubReason");
+const glanceFront = document.getElementById("glanceFront");
+const glanceBack = document.getElementById("glanceBack");
+const glanceStatus = document.getElementById("glanceStatus");
+const glanceExitBtn = document.getElementById("glanceExitBtn");
+const glancePrevBtn = document.getElementById("glancePrevBtn");
+const glanceNextBtn = document.getElementById("glanceNextBtn");
+const openGlanceBtn = document.getElementById("openGlanceBtn");
+let glanceTimer = null;
 const deleteCourseSetupBtn = document.getElementById("deleteCourseSetupBtn");
 const managePlayersBtn = document.getElementById("managePlayersBtn");
 const playersSheet = document.getElementById("playersSheet");
@@ -304,6 +319,28 @@ golfApiCourseSelect.addEventListener("change", handleCourseSelectionChange);
 if (roundYardageBtn) {
   roundYardageBtn.addEventListener("click", function () {
     getYardageToGreen(false);
+  });
+}
+
+if (openGlanceBtn) {
+  openGlanceBtn.addEventListener("click", openGlanceView);
+}
+
+if (glanceExitBtn) {
+  glanceExitBtn.addEventListener("click", showRoundScreen);
+}
+
+if (glancePrevBtn) {
+  glancePrevBtn.addEventListener("click", function () {
+    previousHole();
+    renderGlance();
+  });
+}
+
+if (glanceNextBtn) {
+  glanceNextBtn.addEventListener("click", function () {
+    nextHole();
+    renderGlance();
   });
 }
 
@@ -547,6 +584,7 @@ function showAppScreen(target) {
     scorecard: scorecardSection,
     stats: statsSection,
     yardage: yardageSection,
+    glance: glanceSection,
     settingsSection: settingsSection
   };
 
@@ -565,9 +603,13 @@ function showAppScreen(target) {
     return;
   }
 
-  if ((normalizedTarget === "round" || normalizedTarget === "scorecard" || normalizedTarget === "yardage") && round.players.length === 0) {
+  if ((normalizedTarget === "round" || normalizedTarget === "scorecard" || normalizedTarget === "yardage" || normalizedTarget === "glance") && round.players.length === 0) {
     showAppScreen("startSetup");
     return;
+  }
+
+  if (normalizedTarget !== "glance") {
+    stopGlanceRefresh();
   }
 
   if (normalizedTarget === "round") {
@@ -608,6 +650,12 @@ function showAppScreen(target) {
 
   const activeScreen = screens[normalizedTarget] || setupSection;
   activeScreen.classList.remove("hidden");
+
+  // Started only once the screen is visible, because the renderer skips work
+  // while the section is still hidden.
+  if (normalizedTarget === "glance") {
+    startGlanceRefresh();
+  }
 
   navButtons.forEach(button => {
     const isActive =
@@ -6254,6 +6302,129 @@ function getAccuracyNote(position) {
     weak: accuracy > WEAK_ACCURACY_METERS,
     text: `±${converted} ${unitLabel(true)} GPS accuracy`
   };
+}
+
+// -------------------------------
+// Glance view
+// -------------------------------
+
+// One screen a golfer can read without touching the phone: the hole, the
+// number that matters, and the club. It redraws from the GPS watch that the
+// round already runs, so it adds no extra location work of its own.
+function openGlanceView() {
+  if (round.players.length === 0) {
+    notify("Start a round first.");
+    return;
+  }
+
+  showAppScreen("glance");
+}
+
+function startGlanceRefresh() {
+  stopGlanceRefresh();
+  startLocationWatch();
+  requestWakeLock();
+  renderGlance();
+  glanceTimer = setInterval(renderGlance, 2000);
+}
+
+function stopGlanceRefresh() {
+  if (glanceTimer !== null) {
+    clearInterval(glanceTimer);
+    glanceTimer = null;
+  }
+}
+
+function renderGlance() {
+  if (!glanceSection || glanceSection.classList.contains("hidden")) {
+    return;
+  }
+
+  const hole = round.currentHole || 1;
+
+  glanceHole.textContent = String(hole);
+  glancePar.textContent = `Par ${getHolePar(hole)}`;
+  glanceUnit.textContent = `${unitLabel(true)} to center`;
+
+  const target = getCurrentHoleTarget();
+  const hasTarget = Boolean(target && target.center.lat !== null && target.center.lng !== null);
+  const position = getFreshCachedPosition() || lastPosition;
+
+  if (!hasTarget) {
+    setGlanceDistances(null, null, null);
+    glanceClub.textContent = "—";
+    glanceClubReason.textContent = "Save a green target for this hole to get a club call.";
+    glanceStatus.textContent = "No green target saved for this hole.";
+    glanceStatus.classList.remove("weak");
+    return;
+  }
+
+  if (!position) {
+    setGlanceDistances(null, null, null);
+    glanceClub.textContent = "—";
+    glanceClubReason.textContent = "Waiting for a GPS fix.";
+    glanceStatus.textContent = navigator.geolocation
+      ? "Waiting for GPS…"
+      : "This browser cannot provide GPS.";
+    glanceStatus.classList.remove("weak");
+    return;
+  }
+
+  const yardages = calculateGreenYardages(position.coords.latitude, position.coords.longitude, target);
+  const center = yardages.center || yardages.front || yardages.back;
+
+  setGlanceDistances(center, yardages.front, yardages.back);
+  renderGlanceClub(center);
+
+  const accuracy = getAccuracyNote(position);
+  const ageSeconds = Math.max(0, Math.round((Date.now() - position.timestamp) / 1000));
+
+  glanceStatus.classList.toggle("weak", accuracy.weak);
+  glanceStatus.textContent = accuracy.weak
+    ? `Weak GPS, ${accuracy.text}`
+    : `${accuracy.text} · updated ${ageSeconds}s ago`;
+}
+
+function setGlanceDistances(center, front, back) {
+  glanceDistance.textContent = center === null || center === undefined ? "—" : String(fromYards(center));
+  glanceFront.textContent = front === null || front === undefined ? "—" : String(fromYards(front));
+  glanceBack.textContent = back === null || back === undefined ? "—" : String(fromYards(back));
+}
+
+// The club here is the same call the caddie would make, conditions included,
+// but it never blocks the display: whatever conditions are already cached get
+// used, and nothing is fetched while the screen is being read.
+function renderGlanceClub(distanceYards) {
+  if (!distanceYards) {
+    glanceClub.textContent = "—";
+    glanceClubReason.textContent = "No distance yet.";
+    return;
+  }
+
+  const conditions = conditionsCache && Date.now() - conditionsCache.time < CONDITIONS_MAX_AGE_MS
+    ? conditionsCache.value
+    : null;
+  const target = getCurrentHoleTarget();
+  const position = getFreshCachedPosition() || lastPosition;
+  const bearing = conditions && position && target && target.center.lat !== null
+    ? calculateBearing(position.coords.latitude, position.coords.longitude, target.center.lat, target.center.lng)
+    : null;
+  const lie = shotLieInput ? shotLieInput.value : "fairway";
+  const playing = computePlayingDistance(distanceYards, conditions, bearing, lie);
+  const personal = chooseClubFromPersonalDistances(playing.playingYards);
+
+  glanceClub.textContent = personal ? personal.club : chooseDefaultClubForDistance(playing.playingYards);
+
+  if (playing.adjustments.length > 0) {
+    glanceClubReason.textContent = `Plays ${formatDistance(playing.playingYards)} · ${playing.adjustments.map(item => item.label).join(", ")}`;
+    return;
+  }
+
+  glanceClubReason.textContent = personal
+    ? personal.source === "learned"
+      ? `Your logged ${personal.club}: ${personal.carryYards} yards`
+      : `Your saved ${personal.club}: ${personal.carryYards} yards`
+    : "General club chart. Add your distances in Settings.";
 }
 
 // -------------------------------

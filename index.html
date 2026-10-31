@@ -312,6 +312,43 @@
         </div>
       </section>
 
+      <!-- ============ GLANCE ============ -->
+      <section id="glanceSection" class="screen hidden">
+        <div class="glance">
+          <button id="glanceExitBtn" class="glance-exit" type="button" aria-label="Leave glance view">Done</button>
+
+          <div class="glance-top">
+            <button id="glancePrevBtn" class="glance-step" type="button" aria-label="Previous hole">
+              <svg aria-hidden="true"><use href="#i-chev-left" /></svg>
+            </button>
+            <div class="glance-hole">
+              <span class="glance-hole-number" id="glanceHole">1</span>
+              <span class="glance-hole-par" id="glancePar">Par 4</span>
+            </div>
+            <button id="glanceNextBtn" class="glance-step" type="button" aria-label="Next hole">
+              <svg aria-hidden="true"><use href="#i-chev-right" /></svg>
+            </button>
+          </div>
+
+          <div class="glance-distance">
+            <strong id="glanceDistance" class="glance-number" aria-live="polite">—</strong>
+            <span id="glanceUnit" class="glance-unit">yards to center</span>
+          </div>
+
+          <div class="glance-club">
+            <span id="glanceClub" class="glance-club-name">—</span>
+            <span id="glanceClubReason" class="glance-club-reason">Save a green target for this hole to get a club call.</span>
+          </div>
+
+          <div class="glance-edges">
+            <div><span>Front</span><strong id="glanceFront">—</strong></div>
+            <div><span>Back</span><strong id="glanceBack">—</strong></div>
+          </div>
+
+          <p id="glanceStatus" class="glance-status">Waiting for GPS…</p>
+        </div>
+      </section>
+
       <!-- ============ ACTIVE ROUND ============ -->
       <section id="roundSection" class="screen hidden">
         <div class="hole-bar">
@@ -345,6 +382,7 @@
             <div><span>Front</span><strong id="roundYardFront">—</strong></div>
             <div><span>Back</span><strong id="roundYardBack">—</strong></div>
             <button id="roundYardageBtn" class="btn btn-secondary btn-sm" type="button">Update GPS</button>
+            <button id="openGlanceBtn" class="btn btn-ghost btn-sm" type="button">Glance view</button>
           </div>
         </div>
 

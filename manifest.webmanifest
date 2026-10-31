@@ -1,13 +1,13 @@
 {
   "name": "Golf Assistant",
   "short_name": "Golf Assist",
-  "description": "A hands-free golf caddie for scorekeeping, GPS yardage, hazards, and club advice.",
+  "description": "A hands-free golf caddie for scorekeeping, GPS yardage, hazards, conditions, and club advice.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "background_color": "#f3f6f2",
   "theme_color": "#0d5c38",
-  "orientation": "portrait",
+  "orientation": "any",
   "icons": [
     {
       "src": "icons/icon-192.png",
